@@ -1,0 +1,123 @@
+# amdl-web — 合并镜像：ripper(Go 引擎) + Web 前端(Node)
+#
+# 构建上下文 = 项目根目录。
+# 根目录的 .dockerignore 只放行 engine/ 与 web/，因此上下文很小。
+#
+# 为什么把引擎和前端塞进同一个镜像：
+#   * 前端 spawn 引擎子进程即可，**不需要挂载 /var/run/docker.sock**（ALACarte 需要，
+#     那等于把宿主 root 交给 web 容器），也不需要特权容器；
+#   * 引擎报告结果用 `--json` 打 stdout，同一容器内读管道最直接。
+#
+# 本 NAS 实测坑：`dockerfile:` 相对 build context 解析；git over HTTPS 不可用（故依赖
+# 全部由镜像内的 Go proxy / npm registry 直接拉取，不走 git）。
+
+ARG GOVERSION=1.25.5
+
+# ---------------------------------------------------------------- ripper (Go)
+# 注意：必须用 glibc 基础镜像（bookworm），不能用 alpine。
+# 实测教训：在 golang:1.25-alpine（musl）里构建出的引擎二进制带 PT_INTERP，
+# 指向 /lib/ld-musl-x86_64.so.1；放进 Debian 运行时后 execve 直接失败，
+# Node 的 spawn 只报 "spawn apple-music-dl ENOENT"（极难从现象看出原因）。
+FROM golang:${GOVERSION}-bookworm AS engine-build
+WORKDIR /src
+# 引擎源码（zhaarey/apple-music-downloader，含调用 wrapper-lite 的 fairplay-rip
+# 与 Temari 的 Go 绑定；Temari 的 cdylib 由 Go module 自带）
+COPY engine/ ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 go build -o /out/apple-music-dl main.go
+# Temari 的 Go 绑定靠 runtime.Caller(0) 定位「与自己同目录」的 lib/<platform>/libtemari.so，
+# 这个路径是【编译期】的 module 缓存路径。只把二进制拷进运行时镜像的话，该路径不存在，
+# 运行时会报 "temari: no bundled cdylib for linux-amd64"。这里先把模块目录名和自带的
+# cdylib 一起带出去，运行时再还原到同一路径。TEMARI_LIB 只被 Python 绑定识别，Go 绑定不认。
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go list -m -f '{{.Dir}}' github.com/WorldObservationLog/Temari/bindings/go > /out/temari_dir.txt \
+    && cat /out/temari_dir.txt \
+    && cp -r "$(cat /out/temari_dir.txt)/lib" /out/temari_lib \
+    && ls -l /out/temari_lib/
+
+# ------------------------------------------------------------- frontend (Node)
+FROM node:24-bookworm AS web-build
+WORKDIR /app
+COPY web/package.json web/package-lock.json* ./
+RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+COPY web/tsconfig.json ./
+COPY web/src ./src
+RUN npm run build && npm prune --omit=dev
+
+# --------------------------------------------------------------------- runtime
+FROM node:24-bookworm-slim AS runtime
+
+# Go 运行时需要【系统 CA 证书库】来验证 TLS，而 node:*-slim 不带 ca-certificates。
+# 症状极具迷惑性：前端 fetch（Node 自带 CA）一切正常，引擎却报
+#   tls: failed to verify certificate: x509: certificate signed by unknown authority
+# 这还会让引擎在抓 dev token 时就失败，表现为 "Failed to get token."。
+# 直接从编译器镜像拷 CA 包，避免为此引入 apt（apt 装包在本机要几十秒到几十分钟）。
+# 直接从编译器阶段（golang:${GOVERSION}-bookworm）拷 CA 包 —— 用阶段名而非镜像名，
+# 避免 COPY --from=golang:${GOVERSION} 不做变量展开的问题，也保证版本始终一致。
+COPY --from=engine-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+# ffmpeg 采用静态二进制（mwader/static-ffmpeg），不用 apt。
+# 实测：本机 apt 安装 ffmpeg 需要 25 分钟以上（依赖链近 200 个包，NAS 负载常年偏高），
+# 而静态二进制只需一次 COPY —— 构建时间从分钟级降到秒级。
+# 进程回收交给 compose 的 init: true（等价于 tini），因此也不再 apt 安装 tini。
+COPY --from=mwader/static-ffmpeg:7.1 /ffmpeg /usr/local/bin/ffmpeg
+COPY --from=mwader/static-ffmpeg:7.1 /ffprobe /usr/local/bin/ffprobe
+
+WORKDIR /app
+
+COPY --from=engine-build /out/apple-music-dl /usr/local/bin/apple-music-dl
+
+# 还原 Temari 的「自带 cdylib」到编译期路径（见 engine-build 阶段的说明）。
+COPY --from=engine-build /out/temari_dir.txt /tmp/temari_dir.txt
+COPY --from=engine-build /out/temari_lib /tmp/temari_lib
+
+# 引擎配置模板（运行时通常会被 compose 挂载的 ./config.yaml 覆盖）。
+# 用 example 而不是 config.yaml：保证用户尚未创建 config.yaml 时也能构建成功；
+# 前端在读取基础配置时也会在 config.yaml 不可用时回落到 example（见 web/src/ripper.ts）。
+COPY config.example.yaml /engine/config.example.yaml
+COPY --from=web-build /app/node_modules ./node_modules
+COPY --from=web-build /app/dist ./dist
+COPY web/views ./views
+COPY web/public ./public
+COPY web/package.json ./package.json
+
+# COPY 保留源文件的权限位、并把属主设为 root，而本容器以 uid 1000 运行 ——
+# 必须放开读权限，否则运行时读不到 EJS 视图与静态资源。
+RUN chmod -R a+rX /app/dist /app/views /app/public /app/node_modules
+
+# 构建期自检：把两类「只有到用户点下载时才暴露」的错误提前到构建阶段。
+#   1) 引擎二进制能否在本运行时镜像里 execve（musl/glibc 不匹配的坑）
+#   2) Temari 能否在运行时找到自带的 cdylib（runtime.Caller 路径的坑）
+RUN set -e; \
+    TD="$(cat /tmp/temari_dir.txt)"; \
+    mkdir -p "$TD"; \
+    cp -r /tmp/temari_lib "$TD/lib"; \
+    rm -rf /tmp/temari_lib /tmp/temari_dir.txt; \
+    echo "temari dir: $TD"; ls -l "$TD/lib/linux-x86_64/"; \
+    test -f "$TD/lib/linux-x86_64/libtemari.so"; \
+    if ldd /usr/local/bin/apple-music-dl 2>&1 | grep -q "not found"; then \
+        echo "FATAL: engine binary has unresolved libraries in this runtime image"; \
+        ldd /usr/local/bin/apple-music-dl; exit 1; \
+    fi; \
+    /usr/local/bin/apple-music-dl --help > /dev/null 2>&1 || true; \
+    cd /engine; \
+    (apple-music-dl --json --lite-server http://127.0.0.1:1 "https://music.apple.com/us/song/x/1" > /tmp/eng.txt 2>&1 || true); \
+    if grep -qE "no bundled cdylib|temari library error|load temari library|certificate signed by unknown authority" /tmp/eng.txt; then \
+        echo "FATAL: engine cannot start (temari/linkage):"; cat /tmp/eng.txt; exit 1; \
+    fi; \
+    echo "engine self-check OK (temari library resolved; wrapper/token errors are expected here)"; \
+    printf '%s\n' "--- engine output on a dummy run:"; head -6 /tmp/eng.txt; rm -f /tmp/eng.txt
+
+ENV NODE_ENV=production \
+    PORT=2000 \
+    ENGINE_BIN=apple-music-dl \
+    ENGINE_DIR=/engine \
+    DATA_DIR=/data \
+    MUSIC_DIR=/downloads \
+    LITE_SERVER=http://wrapper-lite:12340
+
+EXPOSE 2000
+
+# 说明：进程 1 由 compose 的 init: true 注入的 init 负责（回收被 spawn 的引擎子进程），
+# 因此这里不再使用 tini。
+CMD ["node", "dist/index.js"]

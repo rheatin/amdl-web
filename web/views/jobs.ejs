@@ -1,0 +1,52 @@
+<%- include("partials/head") %>
+
+<section class="grid two">
+    <div class="card">
+        <h2>任务列表</h2>
+        <p class="muted">进行中 <b><%= queue.running %></b> · 等待 <b><%= queue.pending %></b></p>
+        <% if (jobs.length === 0) { %>
+            <p class="muted">还没有任务，去<a href="/">新建一个</a>。</p>
+        <% } else { %>
+            <ul class="list">
+            <% jobs.forEach(function (j) { %>
+                <li class="<%= (selected && selected.id === j.id) ? 'sel' : '' %>">
+                    <a href="/jobs?job=<%= j.id %>">#<%= j.id %></a>
+                    <span class="badge <%= j.status %>" data-job-badge="<%= j.id %>"><%= j.status %></span>
+                    <span class="muted"><%= j.codec %></span>
+                    <span class="ellipsis"><%= j.url %></span>
+                </li>
+            <% }); %>
+            </ul>
+        <% } %>
+    </div>
+
+    <div class="card">
+        <% if (!selected) { %>
+            <h2>任务详情</h2>
+            <p class="muted">左侧选一个任务。</p>
+        <% } else { %>
+            <h2>任务 #<%= selected.id %> <span class="badge <%= selected.status %>" id="job-status"><%= selected.status %></span></h2>
+            <p class="muted ellipsis"><%= selected.url %></p>
+            <p class="muted">
+                codec <code><%= selected.codec %></code>
+                <% if (selected.startedAt) { %> · 开始 <%= new Date(selected.startedAt).toLocaleString() %><% } %>
+                <% if (selected.finishedAt) { %> · 结束 <%= new Date(selected.finishedAt).toLocaleString() %><% } %>
+            </p>
+            <% if (selected.error) { %><p class="err" id="job-error"><%= selected.error %></p><% } else { %><p class="err" id="job-error" hidden></p><% } %>
+            <h3>本次选项</h3>
+            <p class="muted small">
+                编码 <code><%= selected.codec %></code>
+                · 歌词嵌入 <code><%= (selected.options && selected.options.embedLrc) ? "开" : "关" %></code>
+                · 另存 lrc <code><%= (selected.options && selected.options.saveLrcFile) ? "开" : "关" %></code>
+                · 类型 <code><%= (selected.options && selected.options.lrcType) || "lyrics" %></code>
+                · 附加 <code><%= (selected.options && selected.options.lrcExtra) || "无" %></code>
+                · 格式 <code><%= (selected.options && selected.options.lrcFormat) || "lrc" %></code>
+            </p>
+            <h3>引擎输出</h3>
+            <pre id="console" data-job="<%= selected.id %>"></pre>
+            <p class="muted"><span id="track-count"><%= selected.tracks.length %></span> 首已入库</p>
+        <% } %>
+    </div>
+</section>
+
+<%- include("partials/foot") %>

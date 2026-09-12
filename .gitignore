@@ -1,0 +1,15 @@
+# 私密信息与运行时数据 —— 绝不提交
+.env
+config.yaml            # 本地实际配置（含 media-user-token / authorization-token）
+data/                  # 账号、任务记录、会话密钥、wrapper 的 token 缓存
+music/                 # 下载落盘
+build*.log
+_dl/
+
+# 上游源码（按 README「上游源码获取」自行拉取，不入库）
+wrapper-lite/
+engine/
+
+# 前端依赖与构建产物
+web/node_modules/
+web/dist/

@@ -1,0 +1,24 @@
+<%- include("partials/head") %>
+<section class="card narrow">
+    <div class="brand-block">
+        <%- include("partials/brand") %>
+        <p class="muted small">自托管 Apple Music 下载站点 · 无损 / Dolby Atmos / AAC</p>
+    </div>
+    <h1 style="text-align:center"><%= firstRun ? "创建管理员账号" : "登录" %></h1>
+    <% if (error) { %><p class="err"><%= error %></p><% } %>
+    <% if (firstRun) { %>
+        <p class="muted small">首次运行：创建一个本机管理员账号（用户名 ≥2 字符，密码 ≥8 位）。</p>
+        <form id="setup-form" class="stack">
+            <input name="username" placeholder="用户名" autocomplete="username" required>
+            <input name="password" type="password" placeholder="密码" autocomplete="new-password" required>
+            <button type="submit">创建并登录</button>
+        </form>
+    <% } else { %>
+        <form method="post" action="/login" class="stack">
+            <input name="username" placeholder="用户名" autocomplete="username" required>
+            <input name="password" type="password" placeholder="密码" autocomplete="current-password" required>
+            <button type="submit">登录</button>
+        </form>
+    <% } %>
+</section>
+<%- include("partials/foot") %>

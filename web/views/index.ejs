@@ -1,0 +1,91 @@
+<%- include("partials/head") %>
+
+<section class="card">
+    <h1>新建下载任务</h1>
+    <p class="muted">粘贴 Apple Music 分享链接（song / album / playlist / artist），或先去<a href="/search">搜索</a>。</p>
+    <form id="job-form" class="stack">
+        <div class="row">
+            <input name="url" id="job-url" placeholder="https://music.apple.com/…（粘贴后自动解析）" required>
+            <button type="button" id="parse-btn" class="ghost">解析链接</button>
+        </div>
+
+        <div id="parse-result" class="parse-result muted">粘贴链接后会自动解析，确认可用编码再下载。</div>
+
+        <div class="row" id="download-row" hidden>
+            <select name="codec" id="job-codec">
+                <option value="alac">ALAC 无损</option>
+                <option value="atmos">Dolby Atmos</option>
+                <option value="aac">AAC 有损</option>
+            </select>
+            <button type="submit" id="download-btn">开始下载</button>
+        </div>
+
+        <details class="opts">
+            <summary>歌词 / 高级选项</summary>
+            <div class="opt-grid">
+                <label class="chk"><input type="checkbox" name="embedLrc" checked> 嵌入歌词到文件</label>
+                <label class="chk"><input type="checkbox" name="saveLrcFile"> 另外保存 .lrc 文件</label>
+                <label>歌词类型
+                    <select name="lrcType">
+                        <option value="lyrics">逐行</option>
+                        <option value="syllable-lyrics">逐字（带时间轴）</option>
+                    </select>
+                </label>
+                <label>附加内容
+                    <select name="lrcExtra">
+                        <option value="">无</option>
+                        <option value="translation">翻译</option>
+                        <option value="pronunciation">罗马音</option>
+                    </select>
+                </label>
+                <label>歌词格式
+                    <select name="lrcFormat">
+                        <option value="lrc">lrc</option>
+                        <option value="ttml">ttml</option>
+                    </select>
+                </label>
+            </div>
+            <p class="muted small">这些选项按任务覆盖引擎的 config.yaml（引擎从进程工作目录读配置，因此每个任务用独立配置）。</p>
+        </details>
+    </form>
+    <p id="job-form-msg" class="muted"></p>
+</section>
+
+<section class="grid">
+    <div class="card">
+        <h2>队列</h2>
+        <p><span class="pill">进行中 <b><%= queue.running %></b></span> <span class="pill">等待 <b><%= queue.pending %></b></span></p>
+        <p class="muted">并发：<%= config.concurrency %> · wrapper-lite：<code><%= config.liteServer %></code></p>
+    </div>
+    <div class="card">
+        <h2>最近任务</h2>
+        <% if (jobs.length === 0) { %>
+            <div class="empty">还没有任务 —— 上面粘一个链接就能开始。</div>
+        <% } else { %>
+            <ul class="list">
+            <% jobs.forEach(function (j) { %>
+                <li>
+                    <a href="/jobs?job=<%= j.id %>">#<%= j.id %></a>
+                    <span class="badge <%= j.status %>"><%= j.status %></span>
+                    <span class="muted"><%= j.codec %></span>
+                    <span class="ellipsis"><%= j.url %></span>
+                </li>
+            <% }); %>
+            </ul>
+        <% } %>
+    </div>
+    <div class="card">
+        <h2>最近入库</h2>
+        <% if (tracks.length === 0) { %>
+            <div class="empty">还没有文件 —— 下载完成后会在这里列出。</div>
+        <% } else { %>
+            <ul class="list">
+            <% tracks.forEach(function (t) { %>
+                <li><span class="ellipsis"><%= t.artist %> — <%= t.song %></span></li>
+            <% }); %>
+            </ul>
+        <% } %>
+    </div>
+</section>
+
+<%- include("partials/foot") %>

@@ -1,0 +1,39 @@
+<%- include("partials/head") %>
+
+<section class="card">
+    <h1>设置</h1>
+    <p class="muted">当前版本为只读展示（配置通过容器环境变量 / <code>config.yaml</code> 生效）。</p>
+    <table class="table">
+        <tbody>
+            <tr><th>wrapper-lite 后端</th><td><code><%= config.liteServer %></code></td></tr>
+            <tr><th>ripper 可执行</th><td><code><%= config.engineBin %></code></td></tr>
+            <tr><th>ripper 工作目录</th><td><code><%= config.engineDir %></code></td></tr>
+            <tr><th>音乐目录</th><td><code><%= config.musicDir %></code></td></tr>
+            <tr><th>状态目录</th><td><code><%= config.dataDir %></code></td></tr>
+            <tr><th>Storefront / 语言</th><td><code><%= config.storefront %></code> / <code><%= config.language %></code></td></tr>
+            <tr><th>任务并发</th><td><%= config.concurrency %></td></tr>
+            <tr><th>单任务超时</th><td><%= config.jobTimeoutSec %> 秒</td></tr>
+            <tr><th>队列</th><td>进行中 <%= queue.running %> · 等待 <%= queue.pending %></td></tr>
+        </tbody>
+    </table>
+</section>
+
+<section class="card">
+    <h2>提交 Apple 2FA 验证码</h2>
+    <p class="muted">
+        Apple ID 登录与 2FA 由 <b>wrapper-lite</b> 承担。首次登录时若 Apple 要求验证码，
+        wrapper-lite 会轮询 <code>&lt;base-dir&gt;/2fa.txt</code>（源码 <code>lite/auth.cpp</code>），
+        在这里填即可 —— 无需登录 NAS 改文件。
+    </p>
+    <form id="tfa-form" class="row">
+        <input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位验证码" required>
+        <button type="submit">提交验证码</button>
+    </form>
+    <p id="tfa-msg" class="muted"></p>
+    <p class="muted">
+        另一种方式：启动前在 <code>.env</code> 设置 <code>USERNAME</code> / <code>PASSWORD</code> 让容器自动登录。
+        本前端<b>不保存、不代持</b>你的 Apple 凭据。
+    </p>
+</section>
+
+<%- include("partials/foot") %>

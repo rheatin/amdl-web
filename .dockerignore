@@ -1,0 +1,9 @@
+# 构建上下文 = 项目根目录。默认排除一切，只放行 web/、engine/ 与引擎配置，
+# 这样 wrapper-lite/（117MB+）、music/、data/、下载的 tarball 都不会进上下文。
+*
+!web/
+!web/**
+!engine/
+!engine/**
+!config.yaml
+!config.example.yaml

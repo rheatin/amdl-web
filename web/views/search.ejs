@@ -1,0 +1,47 @@
+<%- include("partials/head") %>
+
+<section class="card">
+    <h1>搜索 Apple Music</h1>
+    <p class="muted">目录搜索使用公开的网页播放器开发者 token，<b>不需要 Apple 账号</b>。Storefront：<code><%= config.storefront %></code>。</p>
+    <form method="get" action="/search" class="row">
+        <input name="q" value="<%= q %>" placeholder="歌名 / 专辑 / 艺人" autofocus required>
+        <button type="submit">搜索</button>
+    </form>
+    <% if (error) { %><p class="err">搜索失败：<%= error %></p><% } %>
+</section>
+
+<% if (q && !error) { %>
+<section class="card">
+    <h2>结果（<%= results.length %>）</h2>
+    <% if (results.length === 0) { %><p class="muted">没有结果。</p><% } %>
+    <ul class="results">
+    <% results.forEach(function (r) { %>
+        <li class="result">
+            <% if (r.artwork) { %><img src="<%= r.artwork %>" alt="" loading="lazy"><% } else { %><span class="art-ph"></span><% } %>
+            <div class="meta">
+                <div class="title"><%= r.name %></div>
+                <div class="muted">
+                    <%= r.type %>
+                    <% if (r.artistName) { %> · <%= r.artistName %><% } %>
+                    <% if (r.albumName) { %> · <%= r.albumName %><% } %>
+                    <% if (r.trackCount) { %> · <%= r.trackCount %> 首<% } %>
+                </div>
+            </div>
+            <div class="actions">
+                <% if (r.url) { %>
+                    <button class="dl" data-url="<%= r.url %>" data-codec="alac">ALAC</button>
+                    <button class="dl ghost" data-url="<%= r.url %>" data-codec="atmos">Atmos</button>
+                    <button class="dl ghost" data-url="<%= r.url %>" data-codec="aac">AAC</button>
+                <% } else { %>
+                    <span class="muted">无可下载链接</span>
+                <% } %>
+            </div>
+        </li>
+    <% }); %>
+    </ul>
+</section>
+<% } %>
+
+<p id="search-msg" class="toast"></p>
+
+<%- include("partials/foot") %>

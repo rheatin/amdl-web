@@ -1,0 +1,8 @@
+* text=auto eol=lf
+
+# 明确二进制，避免被当文本处理
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

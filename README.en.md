@@ -1,0 +1,216 @@
+# amdl-web
+
+A self-hosted Apple Music download site: **log in from the browser → paste a link → get lossless audio**,
+deployed with Docker.
+
+This repository provides the web UI and the Docker orchestration; decryption and downloading are built on the
+open-source components credited below.
+
+[中文说明 →](README.md)
+
+---
+
+## ✨ Features
+
+- **Web login → paste a link → download.** No CLI needed; jobs stream live logs over SSE and results are recorded.
+- **Codec choices come from the track itself.** The link is resolved first and Apple's catalog
+  `audioTraits` decide which of Lossless / Dolby Atmos / AAC are actually offered (albums and playlists
+  use the union across their tracks) — no hardcoded option list.
+- **No Widevine CDM required.** Uses the FairPlay path, so a single `wrapper-lite` service is enough.
+- **No `docker.sock` mount and no privileged frontend container.** The ripper runs inside the frontend
+  container and is invoked as a child process.
+- **Per-job lyrics options**: embed into tags / save a sidecar `.lrc` / line- or syllable-timed /
+  translation or romanization / `lrc` or `ttml`.
+- **Normalized file permissions after download** (default `666`) so media servers running as another uid
+  can read the files.
+- **Apple 2FA code can be submitted in the web UI** — no need to touch files on the host.
+- Lightweight frontend: Express + EJS + a single CSS file, no frontend framework.
+
+## 🏗 Architecture
+
+```
+Browser (login / link resolution / live job log / library)
+   │ HTTP + SSE
+   ▼
+amdl-web container ── frontend (Node + Express + EJS)
+   │  spawns a child process (one private config.yaml per job)
+   ▼
+apple-music-dl ── ripper (Go; uses Temari to perform FairPlay decryption)
+   │ HTTP :12340
+   ▼
+wrapper-lite ── decryption backend (Apple Music account session + /m3u8 /key /lyrics /license)
+   │
+   ▼
+Music directory (ALAC / Atmos / AAC)
+```
+
+Only two services run: `wrapper-lite` (the single "backend service") and `amdl-web` (frontend + ripper).
+See [`docs/DESIGN.md`](docs/DESIGN.md) for design notes.
+
+## 📁 Layout
+
+```
+.
+├── docker-compose.yml        # deployment stack (wrapper-lite + amdl-web)
+├── Dockerfile.web            # combined image: Go-built ripper + Node-built frontend + slim runtime
+├── Dockerfile.amdl           # build patch for wrapper-lite (see "Build changes")
+├── .env.example              # all configuration and secrets live here (copy to .env)
+├── config.example.yaml       # engine config template (exit-on-error / output dirs / lyrics)
+├── web/                      # frontend source
+│   ├── src/                  #   Express app, auth, Apple catalog client, ripper adapter, queue
+│   ├── views/                #   EJS templates
+│   ├── public/               #   stylesheet and browser script (no framework)
+│   └── test/                 #   unit tests (engine output parsing / link parsing)
+├── smoke-wrapper.sh          # credential-free smoke test (startup path and /status)
+├── verify-stack.sh           # deployment verification script
+└── docs/DESIGN.md            # design notes and "builds fine, breaks at runtime" pitfalls
+```
+
+## 🚀 Quick start
+
+Requirements: Docker + Compose v2 on a `linux/amd64` host.
+
+```bash
+git clone <this repo> amdl-web && cd amdl-web
+cp .env.example .env                 # fill in your Apple account and music directory
+cp config.example.yaml config.yaml   # optional: tweak engine defaults
+
+# 1) fetch upstream sources (see "Fetching upstream sources" if git is unusable)
+git clone -b lite https://github.com/WorldObservationLog/wrapper.git wrapper-lite
+git clone https://github.com/zhaarey/apple-music-downloader.git engine
+
+# 2) build (wrapper-lite cross-compiles for Android targets; this takes a while)
+docker compose build
+
+# 3) smoke test: verify the decryption backend starts (no Apple credentials needed)
+sh smoke-wrapper.sh
+
+# 4) start the stack
+docker compose up -d
+# open http://<host>:2000 → create the admin account on first visit
+```
+
+### Connecting your Apple account
+
+Edit `.env`:
+
+```ini
+USERNAME=your-apple-id@example.com
+PASSWORD=your-apple-password
+```
+
+```bash
+docker compose up -d wrapper-lite
+docker compose logs -f wrapper-lite
+```
+
+- An **active Apple Music subscription** is required.
+- After a successful login the session is cached under `data/wrapper/`, so **the password can be left
+  empty afterwards**.
+- If Apple asks for **2FA**, the container log says so — submit the 6-digit code on the web UI's
+  Settings page.
+- The frontend never stores or handles your Apple credentials; they are passed only to the wrapper container.
+
+## ⚙️ Configuration (`.env`)
+
+| Key | Default | Description |
+|---|---|---|
+| `USERNAME` / `PASSWORD` | — | Apple ID (only needed for the wrapper's first login) |
+| `ADMIN_USER` / `ADMIN_PASSWORD` | empty | Site admin; leave empty to create it from the web UI |
+| `SESSION_SECRET` | auto | Session signing key (persisted to `data/web/session.secret` when empty) |
+| `MUSIC_DIR` | `./music` | Output directory on the host |
+| `STOREFRONT` / `LANGUAGE` | `us` / `en-US` | Storefront and metadata language |
+| `WEB_BIND` / `WEB_PORT` | `0.0.0.0` / `2000` | Web listener |
+| `JOB_CONCURRENCY` | `1` | Concurrent jobs (Apple rate-limits by IP; keep at 1) |
+| `FILE_MODE` | `666` | Permission applied to downloaded files; `keep` keeps the engine default `600` |
+| `JOB_TIMEOUT_SEC` / `JOB_LOG_LINES` | `7200` / `2000` | Per-job timeout and retained log lines |
+
+## 🔌 HTTP API
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/healthz` | Health check (no auth) |
+| POST | `/api/setup` | Create the first admin account |
+| POST | `/api/login` · `/api/logout` | Session |
+| GET | `/api/codecs?url=` | Resolve a link and return its **real available codecs** |
+| GET | `/api/search?q=` | Apple Music catalog search |
+| GET | `/api/jobs` · POST `/api/jobs` | List / create jobs (lyrics options supported) |
+| GET | `/api/jobs/:id/events` | SSE: `hello` / `log` / `status` |
+| POST | `/api/apple/2fa` | Submit the Apple 2FA code |
+
+## 🧱 Build changes relative to upstream
+
+- **`Dockerfile.amdl`**: wrapper-lite's CMake pulls cJSON and Dobby through `FetchContent`
+  (which uses `git clone` internally). To build on hosts where git is unusable, those dependencies are
+  vendored into `wrapper-lite/deps/` and injected via `-DFETCHCONTENT_SOURCE_DIR_*`; `-j$(nproc)` is
+  also narrowed to `-j${BUILD_JOBS}`.
+- **`Dockerfile.web`** runs three **build-time self-checks** that turn "only fails when you click
+  Download" errors into build failures: whether the engine binary can `execve` (musl/glibc mismatch),
+  whether Temari's bundled cdylib resolves, and whether system CA certificates are present
+  (Go uses the system CA store, while `node:*-slim` does not ship it).
+- **Per-job engine configuration**: the engine reads `config.yaml` from its process cwd, so each job gets
+  its own config directory.
+
+See [`docs/DESIGN.md`](docs/DESIGN.md) for the reasoning and further pitfalls (bind-mount inode trap,
+the wrapper entrypoint's `chown`, and others).
+
+### Fetching upstream sources (when git is unusable)
+
+Some restricted networks reset TLS (git fails while `curl` works). Use tarballs instead:
+
+```bash
+mkdir -p wrapper-lite engine wrapper-lite/deps/cjson wrapper-lite/deps/dobby
+curl -sL https://codeload.github.com/WorldObservationLog/wrapper/tar.gz/refs/heads/lite \
+  | tar xz --strip-components=1 -C wrapper-lite
+curl -sL https://codeload.github.com/DaveGamble/cJSON/tar.gz/refs/tags/v1.7.19 \
+  | tar xz -C wrapper-lite/deps/cjson --strip-components=1
+curl -sL https://codeload.github.com/BepInEx/Dobby/tar.gz/refs/heads/master \
+  | tar xz -C wrapper-lite/deps/dobby --strip-components=1
+curl -sL https://github.com/zhaarey/apple-music-downloader/archive/refs/heads/main.tar.gz \
+  | tar xz --strip-components=1 -C engine
+```
+
+## ⚠️ Known limitations
+
+- `wrapper-lite`'s rootless launcher mounts procfs inside the container, which **some kernels refuse**.
+  On one tested QNAP kernel neither `cap_add: SYS_ADMIN` nor patching in a fork into a new PID namespace
+  helped, so `privileged: true` is the default (matching the upstream README). If your kernel allows it,
+  upstream's `wrapper-lite-qemu` launcher avoids the privilege requirement.
+- The engine writes files as `600`; this project normalizes them to `FILE_MODE`. If your media server runs
+  as another uid, keep `666` or set its `PUID` to the file owner.
+- Apple rate-limits by IP — **do not** raise `JOB_CONCURRENCY`.
+- Job state is kept in a JSON file (atomic writes); swap in SQLite if the volume grows.
+- Only verified on `linux/amd64` (upstream binaries and the static ffmpeg build).
+
+## 🙏 Credits
+
+This project stands on the shoulders of these open-source projects:
+
+| Project | Role here | License |
+|---|---|---|
+| [**WorldObservationLog/wrapper**](https://github.com/WorldObservationLog/wrapper) (`lite` branch) | **Decryption backend**: Apple Music account session, `/m3u8`, `/key`, `/lyrics`, `/license`, `/webplayback` | MIT |
+| [**WorldObservationLog/Temari**](https://github.com/WorldObservationLog/Temari) | **FairPlay Streaming decryption library** (called by the ripper through its Go binding) | MIT |
+| [**zhaarey/apple-music-downloader**](https://github.com/zhaarey/apple-music-downloader) | **Ripper engine**: catalog and metadata, m3u8, segment download, tagging and artwork | No license declared upstream |
+| [WorldObservationLog/AppleMusicDecrypt](https://github.com/WorldObservationLog/AppleMusicDecrypt) | Configuration and usage reference (its v2 uses wrapper-manager) | AGPL-3.0 |
+| [glomatico/gamdl](https://github.com/glomatico/gamdl) | A classic implementation in this ecosystem and one of the inspirations for the stack above | MIT |
+| [mwader/static-ffmpeg](https://hub.docker.com/r/mwader/static-ffmpeg) | Static ffmpeg at runtime (transcoding / animated artwork) | See image notes (includes GPL components) |
+| [node](https://hub.docker.com/_/node) · [golang](https://hub.docker.com/_/golang) | Base images for building and running | Their respective licenses |
+
+Thanks also to the maintainers of [WorldObservationLog](https://github.com/WorldObservationLog) and
+[zhaarey](https://github.com/zhaarey).
+
+## 📜 License
+
+- This project's own code (`web/`, `Dockerfile.*`, scripts, docs): **MIT**, see [`LICENSE`](LICENSE).
+- `WorldObservationLog/wrapper` and `Temari` are **MIT**; `AppleMusicDecrypt` is **AGPL-3.0**.
+- `zhaarey/apple-music-downloader` **declares no license**: this project only uses it as a
+  **locally built dependency** and does not redistribute it in the repository or image. Obtain the
+  author's permission before redistributing it.
+- Upstream sources (`wrapper-lite/`, `engine/`) are **not** part of this repository — fetch them as
+  described above.
+
+## ⚖️ Legal notice
+
+Using this project requires a **paid Apple Music subscription**. Circumventing DRM is restricted under
+DMCA §1201 / EUCD Art. 6 and similar laws in many jurisdictions. Use it **for personal archiving only**,
+do not expose the service publicly, and do not redistribute downloaded content.

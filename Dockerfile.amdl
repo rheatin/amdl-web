@@ -1,0 +1,69 @@
+# ---------------------------------------------------------------------------
+# amdl-web — patched wrapper-lite build (upstream: WorldObservationLog/wrapper, branch `lite`)
+#
+# Two deliberate deviations from the upstream ./Dockerfile, both required on the
+# target host (QNAP NAS):
+#
+#  1) DEPENDENCIES ARE VENDORED.
+#     wrapper-lite/CMakeLists.txt pulls cJSON (GIT_TAG v1.7.19) and Dobby
+#     (GIT_TAG master) via FetchContent, which shells out to `git clone`.
+#     On this host `git` over HTTPS fails consistently with
+#     "OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to github.com:443"
+#     while plain curl/wget to the same host works. So both dependencies are
+#     pre-fetched with curl into ./deps/ and handed to CMake through
+#     FETCHCONTENT_SOURCE_DIR_* — setting those makes FetchContent skip the
+#     download step entirely.
+#
+#     Refresh them with:
+#       curl -sL https://codeload.github.com/DaveGamble/cJSON/tar.gz/refs/tags/v1.7.19 \
+#         | tar xz -C deps/cjson --strip-components=1
+#       curl -sL https://codeload.github.com/BepInEx/Dobby/tar.gz/refs/heads/master \
+#         | tar xz -C deps/dobby --strip-components=1
+#
+#  2) BUILD PARALLELISM IS BOUNDED.
+#     The host has 4 cores and a high baseline load (it runs immich, jellyfin,
+#     transmission, qbittorrent, moviepilot, aria2 and more) with only ~1.5 GB
+#     RAM free, so -j$(nproc) becomes -j${BUILD_JOBS} (default 2).
+#
+# Everything else is byte-for-byte upstream.
+# ---------------------------------------------------------------------------
+ARG BUILD_PLATFORM=linux/amd64
+ARG RUNTIME_PLATFORM=linux/amd64
+ARG BUILD_JOBS=2
+
+FROM --platform=${BUILD_PLATFORM} debian:13.2 AS build
+ARG NDK_VERSION=23
+ARG BUILD_JOBS
+
+SHELL ["/bin/bash", "-c"]
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+        build-essential cmake unzip git lsb-release gnupg aria2
+
+RUN bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
+
+RUN aria2c -o android-ndk-r${NDK_VERSION}b-linux.zip https://dl.google.com/android/repository/android-ndk-r${NDK_VERSION}b-linux.zip \
+    && unzip -q -d /app android-ndk-r${NDK_VERSION}b-linux.zip \
+    && rm android-ndk-r${NDK_VERSION}b-linux.zip
+
+COPY ./ ./
+
+RUN mkdir -p build \
+    && cmake -S /app -B /app/build -DCMAKE_BUILD_TYPE=Release -DBUILD_HOST_LAUNCHERS=ON \
+        -DFETCHCONTENT_SOURCE_DIR_CJSON=/app/deps/cjson \
+        -DFETCHCONTENT_SOURCE_DIR_DOBBY=/app/deps/dobby \
+    && cmake --build /app/build --target wrapper_lite_exe wrapper_lite_rootless_exe -j${BUILD_JOBS} \
+    && cmake --build /app/build -j${BUILD_JOBS}
+
+FROM --platform=${RUNTIME_PLATFORM} debian:13.2
+
+WORKDIR /app
+COPY --from=build /app/wrapper-lite-rootless /app/wrapper-lite-rootless
+COPY --from=build /app/rootfs /app/rootfs
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh /app/wrapper-lite-rootless
+
+CMD ["/app/entrypoint.sh"]
+
+EXPOSE 12340

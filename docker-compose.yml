@@ -1,0 +1,138 @@
+# amdl-web — 部署栈
+# 目标环境：任意支持 Docker + Compose v2 的 linux/amd64 主机（本项目在 QNAP NAS 上验证）
+#
+# 拓扑（两个服务）：
+#   wrapper-lite : 唯一的“后端服务”——FairPlay 解密（rootless，seccomp=unconfined）
+#   amdl-web     : Web 前端 + ripper(Go 引擎) 同一容器 —— 账号/搜索/队列/进度/音乐库
+#
+# 已在本机实测的关键约束：
+#   * 容器内非特权 user namespace 仅在 security_opt: seccomp=unconfined 下可用；
+#     默认 seccomp profile 会拦截 unshare(CLONE_NEWUSER)（Operation not permitted）。
+#     → wrapper-lite-rootless 可运行，**不需要 --privileged**。
+#   * /dev/kvm 存在，wrapper-lite-qemu 作为退路。
+#   * git over HTTPS 在本机恒失败（SSL_ERROR_SYSCALL），curl 正常
+#     → 上游源码用 curl 拉 tarball 落地；镜像内的依赖走 Go proxy / npm registry，不用 git。
+#   * Container Station 需要 .../container-station/homes/<user> 存在，否则 docker build 直接失败
+#     需事先由管理员创建并授权给构建用户）。
+#
+# 构建：docker compose build      （wrapper-lite 已限 BUILD_JOBS=2 保护 NAS 上现有服务）
+
+name: amdl-web
+
+services:
+  # ---------------------------------------------------------------------------
+  # 解密后端：FairPlay key service，单端口 HTTP 12340
+  # 容器内运行 wrapper-lite-rootless（上游 Dockerfile 拷的就是它）
+  # 端点：/m3u8 /key /lyrics /license /webplayback /status
+  # ---------------------------------------------------------------------------
+  wrapper-lite:
+    build:
+      context: ./wrapper-lite
+      dockerfile: Dockerfile.amdl
+      args:
+        NDK_VERSION: "23"
+        BUILD_JOBS: "2"
+    image: amdl-web/wrapper-lite:local
+    container_name: amdl-wrapper-lite
+    # 注意：entrypoint.sh 在账号库缺失且未提供 USERNAME/PASSWORD 时会 exit 1。
+    # 用 unless-stopped 会无限重启刷日志，故限制重试次数：5 次后停住，日志里能看到原因。
+    # 填好 .env 的 USERNAME/PASSWORD 后正常启动即可。
+    restart: on-failure:5
+    environment:
+      # compose 自动加载项目根目录的 .env 做变量替换
+      USERNAME: ${USERNAME:-}
+      PASSWORD: ${PASSWORD:-}
+    volumes:
+      # token 缓存与 2fa.txt 的持久化位置
+      - ./data/wrapper:/app/rootfs/data
+    ports:
+      # 仅绑定回环用于调试；amdl-web 通过 compose 网络访问，不暴露到局域网
+      - "127.0.0.1:12340:12340"
+    # ---------------------------------------------------------------------
+    # 本机（QNAP kernel 5.10.60-qnap）实测结论 —— 必须 privileged：
+    #
+    #   wrapper-lite-rootless 的启动流程是 unshare(NEWUSER|NEWNS|NEWPID) 后
+    #   mount("proc", "./rootfs/proc", "proc", ...)（源码 wrapper-lite-rootless.c:122）。
+    #   本机内核不允许在容器内嵌套 userns 中挂载 procfs：
+    #     * seccomp=unconfined                  -> mount proc failed: Operation not permitted
+    #     * cap_add: SYS_ADMIN                  -> 同样失败
+    #     * fork 进新 pidns 后再挂（补丁可行性） -> permission denied（故打补丁无用）
+    #     * privileged: true                     -> 成功，/status 返回 200
+    #
+    # 这是上游文档写明的方式（其 README 的 docker run 示例即用 --privileged），
+    # ALACarte 同样如此。若要去掉特权，唯一免特权路径是上游推荐的
+    # wrapper-lite-qemu（QEMU 客机 + 转发 HTTP，需从 release 取 QEMU 资产），见 PLAN.md。
+    # ---------------------------------------------------------------------
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    networks: [amdl]
+
+  # ---------------------------------------------------------------------------
+  # Web 前端 + ripper（同一容器；前端 spawn 引擎子进程，故无需 docker.sock）
+  # 以宿主 uid/gid 1000:100 运行 —— 下载文件属主是宿主 uid 1000，而不是 root
+  # ---------------------------------------------------------------------------
+  amdl-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: amdl-web/frontend:local
+    container_name: amdl-web
+    restart: unless-stopped
+    # 进程 1 用 docker 注入的 init（等价 tini），回收被 spawn 的引擎子进程
+    init: true
+    depends_on:
+      - wrapper-lite
+    user: "1000:100"
+    environment:
+      PORT: "2000"
+      HOME: /data/home
+      DATA_DIR: /data
+      MUSIC_DIR: /downloads
+      ENGINE_DIR: /engine
+      LITE_SERVER: http://wrapper-lite:12340
+      STOREFRONT: ${STOREFRONT:-us}
+      LANGUAGE: ${LANGUAGE:-en-US}
+      # 留空则打开 /login 由页面创建首个管理员
+      ADMIN_USER: ${ADMIN_USER:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      JOB_CONCURRENCY: ${JOB_CONCURRENCY:-1}
+      JOB_TIMEOUT_SEC: ${JOB_TIMEOUT_SEC:-7200}
+      # wrapper-lite 的 data 目录（只用于写 2fa.txt）
+      WRAPPER_DATA_DIR: /wrapper-data
+    volumes:
+      # 引擎读 config.yaml（含 exit-on-error: true / lite-server / 落盘目录）
+      - ./config.yaml:/engine/config.yaml:ro
+      # 前端自身状态（账号、任务记录、会话密钥）
+      - ./data/web:/data
+      # 音乐落盘
+      - ${MUSIC_DIR:-./music}:/downloads
+      # 与 wrapper-lite 共享：网页里提交的 2FA 验证码写到这里（<base-dir>/2fa.txt）
+      - ./data/wrapper:/wrapper-data
+    ports:
+      # 默认只绑回环；建议用反向代理对外
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-2000}:2000"
+    networks: [amdl]
+
+  # ---------------------------------------------------------------------------
+  # 引擎 CLI 形态（可选，用于不经前端手工验证）
+  # 用法：docker compose --profile cli run --rm engine '<apple music url>' -c alac
+  # ---------------------------------------------------------------------------
+  engine:
+    build:
+      context: ./engine
+      dockerfile: Dockerfile
+    image: amdl-web/engine:local
+    container_name: amdl-engine
+    profiles: ["cli"]
+    depends_on:
+      - wrapper-lite
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ${MUSIC_DIR:-./music}:/downloads
+    networks: [amdl]
+
+networks:
+  amdl:
+    name: amdl-net
