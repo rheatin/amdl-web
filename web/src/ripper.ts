@@ -29,10 +29,19 @@ import { config } from "./config.js";
 import { applyOverrides, loadEngineConfig, type OverrideValue } from "./engineconf.js";
 import { store, type Job, type JobOptions, type Track } from "./store.js";
 
+/** 引擎收尾那行的统计：======= [✔ ] Completed: 6/7 | [⚠ ] Warnings: 0 | [✖ ] Errors: 1 ======= */
+export type EngineSummary = {
+    completed: number;
+    total: number;
+    warnings: number;
+    errors: number;
+};
+
 export type RipResult = {
     ok: boolean;
     tracks: Track[];
     error?: string;
+    summary?: EngineSummary;
 };
 
 export function engineArgs(url: string, codec: string): string[] {
@@ -152,14 +161,16 @@ export function rip(job: Job, onLine: (line: string) => void): Promise<RipResult
 
         child.on("close", (code) => {
             const tracks = parseTracks(stdoutLines);
+            const summary = parseSummary(stdoutLines);
             if (code === 0) {
-                finish({ ok: true, tracks });
+                finish({ ok: true, tracks, summary });
                 return;
             }
             const hint = stderrTail.trim().split("\n").slice(-6).join("\n");
             finish({
                 ok: false,
                 tracks,
+                summary,
                 error: `engine exited with code ${code}${hint ? `\n${hint}` : ""}`
             });
         });
@@ -188,6 +199,25 @@ export function parseTracks(lines: string[]): Track[] {
         }
     }
     return [];
+}
+
+/**
+ * 解析引擎的收尾统计行 —— 有曲目失败时它是**唯一**能说明「到底成没成几首」的信息，
+ * 因为 `--json` 汇总只在全部成功时才打印。
+ */
+export function parseSummary(lines: string[]): EngineSummary | undefined {
+    const re = /Completed:\s*(\d+)\s*\/\s*(\d+).*?Warnings:\s*(\d+).*?Errors:\s*(\d+)/;
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const m = re.exec(lines[i] ?? "");
+        if (!m) continue;
+        return {
+            completed: Number(m[1]),
+            total: Number(m[2]),
+            warnings: Number(m[3]),
+            errors: Number(m[4])
+        };
+    }
+    return undefined;
 }
 
 export function engineConfigPath(): string {

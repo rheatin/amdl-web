@@ -389,9 +389,9 @@ button.danger {
     opacity: 0.9;
 }
 .badge.queued {
-    background: var(--warn-soft);
-    color: var(--warn);
-    border-color: rgba(227, 179, 65, 0.3);
+    background: var(--surface-2);
+    color: var(--fg-muted);
+    border-color: var(--line-soft);
 }
 .badge.running {
     background: var(--accent-soft);
@@ -402,6 +402,12 @@ button.danger {
     background: var(--ok-soft);
     color: var(--ok);
     border-color: rgba(70, 201, 139, 0.3);
+}
+/* 部分完成：确实落了盘，但有几首失败 —— 用琥珀色与「排队中」区分开 */
+.badge.partial {
+    background: var(--warn-soft);
+    color: var(--warn);
+    border-color: rgba(227, 179, 65, 0.3);
 }
 .badge.failed {
     background: var(--err-soft);
@@ -426,6 +432,13 @@ button.danger {
 }
 .err {
     color: var(--err);
+    white-space: pre-wrap;
+    font-family: var(--mono);
+    font-size: 12.5px;
+}
+/* 「部分完成」的提示用琥珀色，避免和真失败混在一起 */
+.warn {
+    color: var(--warn);
     white-space: pre-wrap;
     font-family: var(--mono);
     font-size: 12.5px;

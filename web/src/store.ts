@@ -9,7 +9,11 @@ export type Track = {
     song: string;
 };
 
-export type JobStatus = "queued" | "running" | "done" | "failed";
+/**
+ * queued → running → 终态。
+ * 终态三选一：done（全部成功）、partial（有曲目失败但确实落盘了文件）、failed（什么都没出来）。
+ */
+export type JobStatus = "queued" | "running" | "done" | "partial" | "failed";
 
 /**
  * 每个任务的下载选项 —— 会以「按任务覆盖 config.yaml」的方式传给引擎

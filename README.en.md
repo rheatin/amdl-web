@@ -21,6 +21,9 @@ open-source components credited below.
   container and is invoked as a child process.
 - **Lyrics on by default**: embedded into tags plus a sidecar `.lrc`; line- or syllable-timed /
   translation or romanization / `lrc` or `ttml` remain per-job overridable.
+- **One failed track is not a wasted job**: the engine only prints its file list when everything
+  succeeds, so on failure the web layer recovers what actually landed (by mtime) — the job becomes
+  `partial` instead of `failed`, permissions are still normalised, and a retry button is offered.
 - **Normalized file permissions after download** (default `666`) so media servers running as another uid
   can read the files.
 - **Apple 2FA code can be submitted in the web UI** — no need to touch files on the host.
@@ -160,6 +163,7 @@ See `config.example.yaml` in the repo root: a fully commented template covering 
 | GET | `/api/codecs?url=` | Resolve a link and return its **real available codecs** |
 | GET | `/api/search?q=` | Apple Music catalog search |
 | GET | `/api/jobs` · POST `/api/jobs` | List / create jobs (keys inside `options` = per-job overrides) |
+| POST | `/api/jobs/:id/retry` | Retry: clones the job (the engine skips tracks already on disk, so only failures are re-fetched) |
 | GET | `/api/jobs/:id/events` | SSE: `hello` / `log` / `status` |
 | GET | `/api/config` | Read-only config snapshot (credentials masked) |
 | POST | `/api/apple/2fa` | Submit the Apple 2FA code |

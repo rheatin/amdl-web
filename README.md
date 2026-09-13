@@ -16,6 +16,8 @@
 - **不需要 Widevine CDM**：走 FairPlay 路线，只需一个 `wrapper-lite` 服务。
 - **不挂 `docker.sock`**，前端容器**非特权**：ripper 与前端同容器，通过子进程调用。
 - **歌词默认开启**：写进音频标签，并另存一份 `.lrc`；逐行或逐字 / 翻译或罗马音 / `lrc` 或 `ttml` 可按任务临时改。
+- **失败一首不算白下**：引擎只有在全部成功时才打印落盘清单，所以任务失败时前端会按 mtime
+  把这次真正写出的文件找回来 —— 状态记为 `partial`（部分完成）、权限照样统一、并给一个重试按钮。
 - **下载后统一文件权限**（默认 `666`），便于以其它 uid 运行的媒体服务器读取。
 - **网页内提交 Apple 2FA 验证码**，无需登录 NAS 改文件。
 - 前端轻量：Express + EJS + 单个 CSS 文件，无前端框架依赖。
@@ -153,6 +155,7 @@ docker compose logs -f wrapper-lite
 | GET | `/api/codecs?url=` | 解析链接并返回**真实可用编码** |
 | GET | `/api/search?q=` | Apple Music 目录搜索 |
 | GET | `/api/jobs` · POST `/api/jobs` | 任务列表 / 创建（`options` 里的键=本次临时覆盖） |
+| POST | `/api/jobs/:id/retry` | 重试：克隆原任务（引擎会跳过已下载的曲目，只补失败的几首） |
 | GET | `/api/jobs/:id/events` | SSE：`hello` / `log` / `status` |
 | GET | `/api/config` | 只读配置快照（凭据打码） |
 | POST | `/api/apple/2fa` | 提交 Apple 2FA 验证码 |

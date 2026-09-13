@@ -218,6 +218,26 @@ if (tfaForm) {
     });
 }
 
+/* ---- 任务页：重试按钮 ---- */
+const retryBtn = document.querySelector("[data-retry]");
+if (retryBtn) {
+    retryBtn.addEventListener("click", async () => {
+        const id = retryBtn.getAttribute("data-retry");
+        retryBtn.disabled = true;
+        try {
+            const data = await postJson(`/api/jobs/${id}/retry`, {});
+            if (data && data.job) {
+                location.href = `/jobs?job=${data.job.id}`;
+                return;
+            }
+            throw new Error("服务端未返回新任务");
+        } catch (err) {
+            retryBtn.disabled = false;
+            toast(`重试失败：${err.message}`);
+        }
+    });
+}
+
 /* ---- 任务页：实时控制台 + 状态徽章 ---- */
 const consoleEl = document.getElementById("console");
 if (consoleEl) {
@@ -265,6 +285,7 @@ if (consoleEl) {
     const setError = (msg) => {
         if (!errorEl || !msg) return;
         errorEl.textContent = msg;
+        errorEl.className = msg.startsWith("部分完成") ? "warn" : "err";
         errorEl.hidden = false;
     };
 

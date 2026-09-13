@@ -340,6 +340,29 @@ app.post("/api/jobs", requireAuth, (req: Request, res: Response) => {
     res.status(201).json({ job });
 });
 
+/**
+ * 重试：把原任务（同一个链接 / 编码 / 临时覆盖）克隆成一个新任务。
+ *
+ * 之所以「重试」够用而不需要「强制重下」：引擎遇到已存在的文件会先跳过
+ * （`Track already exists locally.`），所以重跑一个专辑链接只会补上失败的那几首。
+ * 而实测的失败原因是 Apple CDN 偶发掐断 HTTP/2 流，重跑一次通常就好了。
+ */
+app.post("/api/jobs/:id/retry", requireAuth, (req: Request, res: Response) => {
+    const src = store.job(Number(req.params.id));
+    if (!src) {
+        res.status(404).json({ error: "no such job" });
+        return;
+    }
+    if (src.status === "running" || src.status === "queued") {
+        res.status(409).json({ error: "job is still active" });
+        return;
+    }
+    const user = res.locals.user as { id: number };
+    const job = store.addJob(user.id, src.url, src.codec, src.options ?? {});
+    enqueue(job);
+    res.status(201).json({ job });
+});
+
 app.delete("/api/jobs/:id", requireAuth, (req: Request, res: Response) => {
     const id = Number(req.params.id);
     const job = store.job(id);
@@ -375,10 +398,24 @@ app.get("/api/jobs/:id/events", requireAuth, (req: Request, res: Response) => {
         res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
-    send({ type: "hello", job, queue: queueDepth() });
-    for (const line of job.log) send({ type: "log", line, at: Date.now() });
+    /**
+     * 顺序很讲究：**先订阅、再发 hello**。
+     * hello 里带着完整的 job.log，客户端收到后是「覆盖式」渲染；
+     * 若在 hello 之后再重放一遍 job.log（早先的实现就是这样），开头几行会在控制台上
+     * 重复出现（用户实际看到过两遍「基线 = config.yaml…」）。
+     * 但直接在订阅前发 hello 又会漏掉这两步之间产生的日志，所以先订阅、暂存、再补发。
+     */
+    let live = false;
+    const staged: unknown[] = [];
+    const unsubscribe = subscribe(id, (ev) => {
+        if (live) send(ev);
+        else staged.push(ev);
+    });
 
-    const unsubscribe = subscribe(id, (ev) => send(ev));
+    send({ type: "hello", job: store.job(id) ?? job, queue: queueDepth() });
+    live = true;
+    for (const ev of staged) send(ev);
+
     const heartbeat = setInterval(() => res.write(": ping\n\n"), 20_000);
 
     req.on("close", () => {

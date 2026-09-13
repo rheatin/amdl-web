@@ -8,11 +8,13 @@ import type { Track } from "./store.js";
  *
  * 引擎写出的音频是 0600（仅属主可读），而用户的媒体库惯例是 0666 ——
  * navidrome / jellyfin 常以别的 uid 运行，600 会让它们读不到新文件。
- * 任务成功后在此把音频文件、以及同目录的封面/歌词等旁挂文件一并调整。
+ * 除了本任务写出的音频，同目录下的**其它音频**与封面/歌词等旁挂文件也一并调整：
+ * 重试只补一两首时，同专辑里先前下好的文件仍是 600，媒体服务器会「只读到半张专辑」。
  *
  * 由 FILE_MODE 控制（八进制字符串，默认 "666"；设为 "keep" 可关闭）。
  */
 const SIDECAR = /\.(jpg|jpeg|png|webp|lrc|ttml|m3u8)$/i;
+const AUDIO = /\.(m4a|mp4|m4v|mov|mp3|flac|wav|aac)$/i;
 
 export function applyFileModes(tracks: Track[]): number {
     const mode = config.fileMode;
@@ -35,7 +37,7 @@ export function applyFileModes(tracks: Track[]): number {
             continue;
         }
         for (const name of names) {
-            if (SIDECAR.test(name) && chmod(path.join(dir, name), mode)) changed++;
+            if ((SIDECAR.test(name) || AUDIO.test(name)) && chmod(path.join(dir, name), mode)) changed++;
         }
     }
 

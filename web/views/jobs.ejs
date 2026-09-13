@@ -32,19 +32,24 @@
                 <% if (selected.startedAt) { %> · 开始 <%= new Date(selected.startedAt).toLocaleString() %><% } %>
                 <% if (selected.finishedAt) { %> · 结束 <%= new Date(selected.finishedAt).toLocaleString() %><% } %>
             </p>
-            <% if (selected.error) { %><p class="err" id="job-error"><%= selected.error %></p><% } else { %><p class="err" id="job-error" hidden></p><% } %>
-            <h3>本次选项</h3>
-            <p class="muted small">
-                编码 <code><%= selected.codec %></code>
-                · 歌词嵌入 <code><%= (selected.options && selected.options.embedLrc) ? "开" : "关" %></code>
-                · 另存 lrc <code><%= (selected.options && selected.options.saveLrcFile) ? "开" : "关" %></code>
-                · 类型 <code><%= (selected.options && selected.options.lrcType) || "lyrics" %></code>
-                · 附加 <code><%= (selected.options && selected.options.lrcExtra) || "无" %></code>
-                · 格式 <code><%= (selected.options && selected.options.lrcFormat) || "lrc" %></code>
+            <% if (selected.error) { %><p class="<%= selected.status === 'partial' ? 'warn' : 'err' %>" id="job-error"><%= selected.error %></p><% } else { %><p class="err" id="job-error" hidden></p><% } %>
+            <p class="row">
+                <button class="ghost" type="button" data-retry="<%= selected.id %>">重试这个任务</button>
+                <span class="muted small">已下载的曲目会被引擎跳过，只补失败的那几首</span>
             </p>
+            <h3>本次覆盖</h3>
+            <% const overrides = Object.keys(selected.options || {}); %>
+            <% if (overrides.length === 0) { %>
+                <p class="muted small">无 —— 完全按 <code>config.yaml</code> 的值执行（只记录显式覆盖，不落盘）。</p>
+            <% } else { %>
+                <% const optLabels = { embedLrc: "嵌入歌词", saveLrcFile: "另存 .lrc", lrcType: "歌词类型", lrcExtra: "附加", lrcFormat: "格式" }; %>
+                <p class="muted small">仅本任务：
+                    <% overrides.forEach(function (k, i) { %><%= i ? " · " : "" %><%= optLabels[k] || k %> <code><%= String(selected.options[k]) %></code><% }); %>
+                </p>
+            <% } %>
             <h3>引擎输出</h3>
             <pre id="console" data-job="<%= selected.id %>"></pre>
-            <p class="muted"><span id="track-count"><%= selected.tracks.length %></span> 首已入库</p>
+            <p class="muted"><span id="track-count"><%= selected.tracks.length %></span> 首已落盘</p>
         <% } %>
     </div>
 </section>
