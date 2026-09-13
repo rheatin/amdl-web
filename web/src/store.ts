@@ -30,7 +30,7 @@ export type JobOptions = {
 
 export const DEFAULT_JOB_OPTIONS: JobOptions = {
     embedLrc: true,
-    saveLrcFile: false,
+    saveLrcFile: true,
     lrcType: "lyrics",
     lrcExtra: "",
     lrcFormat: "lrc"

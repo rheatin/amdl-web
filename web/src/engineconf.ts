@@ -144,7 +144,7 @@ export function lyricOptionsFromConfig(engineDir: string = config.engineDir): En
     const lrcExtra = raw === "translation" || raw === "pronunciation" ? raw : "";
     return {
         embedLrc: asBool(v["embed-lrc"], true),
-        saveLrcFile: asBool(v["save-lrc-file"], false),
+        saveLrcFile: asBool(v["save-lrc-file"], true),
         lrcType,
         lrcExtra,
         lrcFormat: v["lrc-format"] === "ttml" ? "ttml" : "lrc"

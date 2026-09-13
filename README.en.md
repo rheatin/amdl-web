@@ -19,8 +19,8 @@ open-source components credited below.
 - **No Widevine CDM required.** Uses the FairPlay path, so a single `wrapper-lite` service is enough.
 - **No `docker.sock` mount and no privileged frontend container.** The ripper runs inside the frontend
   container and is invoked as a child process.
-- **Per-job lyrics options**: embed into tags / save a sidecar `.lrc` / line- or syllable-timed /
-  translation or romanization / `lrc` or `ttml`.
+- **Lyrics on by default**: embedded into tags plus a sidecar `.lrc`; line- or syllable-timed /
+  translation or romanization / `lrc` or `ttml` remain per-job overridable.
 - **Normalized file permissions after download** (default `666`) so media servers running as another uid
   can read the files.
 - **Apple 2FA code can be submitted in the web UI** — no need to touch files on the host.

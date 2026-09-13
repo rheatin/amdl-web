@@ -38,7 +38,7 @@ max-memory-limit: 256     # MB，引擎内存上限
 
 # ── 歌词 ────────────────────────────────────────────────────────────────────
 embed-lrc: true           # 把歌词写进音频文件标签
-save-lrc-file: false      # 另外存一份 .lrc 文件
+save-lrc-file: true       # 另外存一份 .lrc 文件（默认开，媒体库可直接读）
 lrc-type: "lyrics"        # lyrics=逐行；syllable-lyrics=逐字（带时间轴）
 lrc-extra: ""             # ""=不附加；translation=翻译；pronunciation=罗马音
 lrc-format: "lrc"         # lrc 或 ttml

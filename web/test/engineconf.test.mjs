@@ -154,8 +154,8 @@ check("config.yaml 缺失时回落到 config.example.yaml（bind mount 成目录
     const cfg = loadEngineConfig(engineDir);
     assert.equal(path.basename(cfg.file), "config.example.yaml");
     assert.equal(cfg.values["storefront"], "us");
-    // 缺失键用默认值补齐
-    assert.equal(lyricOptionsFromConfig(engineDir).saveLrcFile, false);
+    // 缺失键用默认值补齐（save-lrc-file 的默认值是 true）
+    assert.equal(lyricOptionsFromConfig(engineDir).saveLrcFile, true);
 });
 
 console.log(failed === 0 ? "\nALL TESTS PASSED" : `\n${failed} TEST(S) FAILED`);
