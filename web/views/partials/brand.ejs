@@ -1,6 +1,9 @@
 <%
 /* 品牌区：SVG 徽标（音符 + 下载箭头）+ 字标。
-   用 SVG 而不是 ♪ 字符 —— 字符依赖字体、基线不稳、各平台观感差异大。 */
+   - 用 SVG 而不是 ♪ 字符：字符依赖字体、基线不稳、各平台观感差异大。
+   - 字标必须连续排版：early 版本给 .wordmark 加了 display:inline-flex，
+     使 "amdl" 与 "-web" 成为两个 flex 项，中间凭空多了空隙，看起来像 "amdl -web"。
+     这里把连字符并入前段（amdl- 正常色 + web 弱化），整体读作一个词。 */
 %>
 <a class="brand" href="/">
     <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
@@ -19,5 +22,5 @@
         <path d="M22.2 13.6v5.1m0 0 2.3-2.3m-2.3 2.3-2.3-2.3" fill="none" stroke="#0a0b10"
               stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" />
     </svg>
-    <span class="wordmark">amdl<span class="wm-tail">-web</span></span>
+    <span class="wordmark">amdl-<span class="wm-tail">web</span></span>
 </a>

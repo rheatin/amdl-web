@@ -11,7 +11,7 @@
  *
  * The JWT is the public web-player developer token, not a user credential.
  */
-import { config } from "./config.js";
+import { config, language, storefront } from "./config.js";
 
 const UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -71,7 +71,7 @@ function isWebPlayToken(jwt: string): boolean {
 /** GET a catalog path, walking token candidates on 401/403. Returns null on 404. */
 async function catalogGet(pathname: string, params: Record<string, string>): Promise<unknown> {
     const url = new URL(`https://amp-api.music.apple.com${pathname}`);
-    url.searchParams.set("l", config.language);
+    url.searchParams.set("l", language());
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
     const list = await tokenCandidates();
@@ -137,7 +137,7 @@ export async function searchCatalog(
     limit = 12
 ): Promise<SearchItem[]> {
     const raw = await catalogGet(
-        `/v1/catalog/${encodeURIComponent(config.storefront)}/search`,
+        `/v1/catalog/${encodeURIComponent(storefront())}/search`,
         { term, types, limit: String(limit), offset: "0" }
     );
     const body = raw as { results?: Record<string, { data?: RawItem[] } | undefined> };
@@ -207,8 +207,8 @@ export function summarizeTraits(traits: string[]): string {
     return labels.join(" · ");
 }
 
-function pickStorefront(storefront?: string): string {
-    return (storefront && /^[a-z]{2}$/i.test(storefront) ? storefront : config.storefront).toLowerCase();
+function pickStorefront(sf: string | undefined): string {
+    return (sf && /^[a-z]{2}$/i.test(sf) ? sf : storefront()).toLowerCase();
 }
 
 type RawResource = {

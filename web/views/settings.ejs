@@ -1,21 +1,105 @@
 <%- include("partials/head") %>
 
 <section class="card">
-    <h1>设置</h1>
-    <p class="muted">当前版本为只读展示（配置通过容器环境变量 / <code>config.yaml</code> 生效）。</p>
+    <h1>配置</h1>
+    <p class="muted">
+        本页<strong>只读</strong>：这里显示的就是此刻真正生效的配置。要改配置请直接编辑下面标出的文件，
+        然后 <code>docker compose up -d</code> 重建容器 —— 少一份可写的副本，就少一处「两份配置互相覆盖」的坑。
+    </p>
     <table class="table">
         <tbody>
-            <tr><th>wrapper-lite 后端</th><td><code><%= config.liteServer %></code></td></tr>
-            <tr><th>ripper 可执行</th><td><code><%= config.engineBin %></code></td></tr>
-            <tr><th>ripper 工作目录</th><td><code><%= config.engineDir %></code></td></tr>
-            <tr><th>音乐目录</th><td><code><%= config.musicDir %></code></td></tr>
-            <tr><th>状态目录</th><td><code><%= config.dataDir %></code></td></tr>
-            <tr><th>Storefront / 语言</th><td><code><%= config.storefront %></code> / <code><%= config.language %></code></td></tr>
-            <tr><th>任务并发</th><td><%= config.concurrency %></td></tr>
-            <tr><th>单任务超时</th><td><%= config.jobTimeoutSec %> 秒</td></tr>
+            <tr>
+                <th>下载相关</th>
+                <td><code><%= engineFile %></code>
+                    <span class="muted small">（音质 / 歌词 / 命名 / 转码 / 地区 / Apple 凭据）</span></td>
+            </tr>
+            <tr>
+                <th>部署相关</th>
+                <td><code>.env</code>
+                    <span class="muted small">（端口 / 目录 / 权限 / 时区 / 代理 / 并发 / 站点管理员口令）</span></td>
+            </tr>
+            <tr>
+                <th>随时可改</th>
+                <td>新建任务页上的<strong>「本次任务临时覆盖」</strong>
+                    <span class="muted small">（只影响那一次下载，不落盘）</span></td>
+            </tr>
+        </tbody>
+    </table>
+</section>
+
+<section class="card">
+    <h2>运行信息（来自 <code>.env</code>）</h2>
+    <table class="table">
+        <tbody>
+            <tr><th>wrapper-lite 后端</th><td><code><%= config.liteServer %></code>（<code>LITE_SERVER</code>）</td></tr>
+            <tr><th>ripper 可执行</th><td><code><%= config.engineBin %></code>（<code>ENGINE_BIN</code>）</td></tr>
+            <tr><th>ripper 工作目录</th><td><code><%= config.engineDir %></code>（<code>ENGINE_DIR</code>）</td></tr>
+            <tr><th>音乐目录</th><td><code><%= config.musicDir %></code>（<code>MUSIC_DIR</code>）</td></tr>
+            <tr><th>状态目录</th><td><code><%= config.dataDir %></code>（<code>DATA_DIR</code>）</td></tr>
+            <tr><th>wrapper 数据目录</th><td><code><%= config.wrapperDataDir %></code>（<code>WRAPPER_DATA_DIR</code>，2FA 验证码写在这里）</td></tr>
+            <tr><th>进程属主 / 属组</th><td><code><%= config.puid %>:<%= config.pgid %></code>（<code>PUID</code>/<code>PGID</code>，须与 compose 的 <code>user:</code> 及宿主目录属主一致）</td></tr>
+            <tr><th>任务并发</th><td><%= config.concurrency %>（<code>JOB_CONCURRENCY</code>）</td></tr>
+            <tr><th>单任务超时 / 日志行数</th><td><%= config.jobTimeoutSec %> 秒 / <%= config.logLines %> 行（<code>JOB_TIMEOUT_SEC</code> / <code>JOB_LOG_LINES</code>）</td></tr>
+            <tr><th>下载后文件权限</th><td>
+                <% if (config.fileMode === null) { %>
+                    <code>keep</code> —— 保持引擎默认（600），媒体服务器可能读不到
+                <% } else { %>
+                    <code><%= config.fileMode.toString(8) %></code>（<code>FILE_MODE</code>）
+                <% } %>
+            </td></tr>
+            <tr><th>会话有效期</th><td><%= config.sessionDays %> 天（<code>SESSION_DAYS</code>）</td></tr>
+            <tr><th>信任反向代理</th><td><%= config.trustProxy ? "是（TRUST_PROXY）" : "否（TRUST_PROXY 未开）" %></td></tr>
+            <tr><th>出网代理</th><td>
+                <% var px = config.httpsProxy || config.httpProxy; %>
+                <%= px ? px : "直连（HTTP_PROXY / HTTPS_PROXY 未设置）" %>
+            </td></tr>
+            <tr><th>时区</th><td><code><%= process.env.TZ || "（未设置 TZ，容器默认 UTC）" %></code></td></tr>
             <tr><th>队列</th><td>进行中 <%= queue.running %> · 等待 <%= queue.pending %></td></tr>
         </tbody>
     </table>
+</section>
+
+<section class="card">
+    <h2>地区与语言（跟随 <code>config.yaml</code>）</h2>
+    <p class="muted">
+        <code>.env</code> 里的 <code>STOREFRONT</code> / <code>LANGUAGE</code> 只作兜底：
+        只要 <code>config.yaml</code> 写了这两个键，就以文件为准（同一个地方配地区，搜索、编码探测、下载元数据一起变）。
+    </p>
+    <table class="table">
+        <tbody>
+            <tr><th>生效的店铺地区</th><td><code><%= storefront %></code></td></tr>
+            <tr><th>生效的元数据语言</th><td><code><%= language %></code></td></tr>
+        </tbody>
+    </table>
+</section>
+
+<section class="card">
+    <h2>引擎配置 <code>config.yaml</code>（凭据已打码）</h2>
+    <% if (engineText === null) { %>
+        <div class="empty">
+            读不到 <code><%= engineFile %></code>。<br>
+            常见原因：宿主机还没创建 <code>config.yaml</code>（compose 的 bind mount 会把缺失的目标建成目录）。
+            修复：<code>cp config.example.yaml config.yaml</code> 填好后再 <code>docker compose up -d</code>。
+        </div>
+    <% } else { %>
+        <p class="muted small">
+            共 <b><%= engineKeys.length %></b> 个生效键。每个任务的私有配置都由这份文件复制而来，
+            只额外写入 <code>lite-server</code>、<code>exit-on-error</code> 和你在任务页勾选的临时覆盖项。
+            <button type="button" class="ghost" data-copy="#engine-config">复制全文</button>
+        </p>
+        <dl class="kv">
+            <% secrets.forEach(function (s) { %>
+                <dt><code><%= s.key %></code></dt>
+                <dd><%= s.set ? '<span class="badge done">已配置</span>' : '<span class="badge failed">未配置</span>' %></dd>
+            <% }); %>
+        </dl>
+        <pre class="code" id="engine-config"><%= engineText %></pre>
+        <p class="muted small">
+            <code>media-user-token</code> 用于歌词 / 电台；留空则只能下载公开内容。
+            <code>authorization-token</code> 留空时引擎会自行抓取 dev token（失败时先看容器能否出网）。
+            本服务<strong>不保存、不代持</strong>你的 Apple 账号口令 —— 账号登录由 wrapper-lite 负责。
+        </p>
+    <% } %>
 </section>
 
 <section class="card">
@@ -23,7 +107,7 @@
     <p class="muted">
         Apple ID 登录与 2FA 由 <b>wrapper-lite</b> 承担。首次登录时若 Apple 要求验证码，
         wrapper-lite 会轮询 <code>&lt;base-dir&gt;/2fa.txt</code>（源码 <code>lite/auth.cpp</code>），
-        在这里填即可 —— 无需登录 NAS 改文件。
+        在这里填即可 —— 无需登录宿主机改文件。
     </p>
     <form id="tfa-form" class="row">
         <input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位验证码" required>
@@ -31,8 +115,8 @@
     </form>
     <p id="tfa-msg" class="muted"></p>
     <p class="muted">
-        另一种方式：启动前在 <code>.env</code> 设置 <code>USERNAME</code> / <code>PASSWORD</code> 让容器自动登录。
-        本前端<b>不保存、不代持</b>你的 Apple 凭据。
+        另一种方式：启动 wrapper-lite 时用 <code>--login user:pass</code> 让它先登录一次，
+        会话会缓存进 wrapper 数据目录，之后口令可以不再提供。
     </p>
 </section>
 

@@ -1,98 +1,110 @@
-media-user-token: "your-media-user-token"   # 来自 music.apple.com 的 cookie，用于电台/歌词（可选）
-authorization-token: "your-authorization-token"  # 留空则引擎自行获取 dev token
-language: ""         #supportedLanguage by each storefront --> https://gist.github.com/itouakirai/c8ba9df9dc65bd300094103b058731d0
-lrc-extra: ""        #translation or pronunciation
-lrc-type: "lyrics"   #lyrics or syllable-lyrics
-lrc-format: "lrc"   #lrc or ttml
-embed-lrc: true
-save-lrc-file: false
-save-artist-cover: false
-save-animated-artwork: false    # If enabled, requires ffmpeg
-emby-animated-artwork: false    # If enabled, requires ffmpeg
+# =============================================================================
+# 引擎配置 —— 本文件是「下载相关」参数的唯一出处
+#
+# 三个地方各管一摊（详见 README 的「配置分层」）：
+#   * .env        → 部署相关：端口 / 路径 / 权限 / 时区 / 代理 / 并发 / 站点口令
+#   * 本文件       → 下载相关：音质 / 歌词 / 命名 / 转码 / 地区 / Apple 凭据
+#   * 网页 UI      → 只有「本次任务临时覆盖」的几项，用完即弃、不落盘
+#
+# 使用方法：
+#   cp config.example.yaml config.yaml   # 然后填上自己的 token
+#   docker compose up -d                 # 改完必须重启容器（单文件 bind mount 认 inode）
+# 网页「配置」页会只读地展示本文件（凭据自动打码），随时可以看到实际生效的值。
+# =============================================================================
+
+# ── Apple 凭据（只写在这里；网页不保存、不代持你的账号口令）───────────────────
+# media-user-token：来自 music.apple.com 的 cookie，用于歌词/电台等需要账号的内容。
+#   取法：浏览器登录 music.apple.com → 开发者工具 → Application → Cookies →
+#   复制 media-user-token 的值。留空则只能下载公开内容。
+media-user-token: ""
+# authorization-token：amp-api 的 Bearer token。留空时引擎会自行抓取 dev token
+#   （失败通常是容器出网/CA 问题，先看容器日志）。抓取到的 token 也会被 wrapper 缓存。
+authorization-token: ""
+
+# ── 地区与语言（决定搜索、编码探测与元数据语言，必须与账号所在区一致）──────────
+# 支持的语言码见：
+#   https://gist.github.com/itouakirai/c8ba9df9dc65bd300094103b058731d0
+storefront: "cn"          # 两位国家码：cn / us / jp / hk / tw …
+language: "zh-Hans-CN"    # 元数据语言，例：zh-Hans-CN / en-US / ja
+
+# ── 音质 ────────────────────────────────────────────────────────────────────
+alac-max: 192000          # ALAC 最高采样率：192000 96000 48000 44100
+atmos-max: 2768           # Atmos 最高码率：2768 2448
+aac-type: aac-lc          # aac-lc aac aac-binaural aac-downmix
+get-m3u8-mode: hires      # hires=只探测高解析清单；all=全部
+limit-max: 200            # 一次任务最多处理多少首（防止误贴大播放列表）
+alac-fix: true            # 修复损坏的 ALAC 包（建议保持 true）
+max-memory-limit: 256     # MB，引擎内存上限
+
+# ── 歌词 ────────────────────────────────────────────────────────────────────
+embed-lrc: true           # 把歌词写进音频文件标签
+save-lrc-file: false      # 另外存一份 .lrc 文件
+lrc-type: "lyrics"        # lyrics=逐行；syllable-lyrics=逐字（带时间轴）
+lrc-extra: ""             # ""=不附加；translation=翻译；pronunciation=罗马音
+lrc-format: "lrc"         # lrc 或 ttml
+
+# ── 封面与美术 ──────────────────────────────────────────────────────────────
 embed-cover: true
 cover-size: 5000x5000
-cover-format: jpg       #jpg png or original
-tag-sort-order: true
-tag-itunes-id: true
+cover-format: jpg         # jpg png or original
+save-artist-cover: false  # 同时保存艺人头像
+save-animated-artwork: false   # 动态封面（需要 ffmpeg，镜像里已内置）
+emby-animated-artwork: false   # 动态封面存成 emby 认的命名（需要 ffmpeg）
+
+# ── 落盘目录与命名模板 ───────────────────────────────────────────────────────
+# 容器内路径：/downloads 就是宿主机的 MUSIC_DIR。
 alac-save-folder: "/downloads/ALAC"
 atmos-save-folder: "/downloads/Atmos"
 aac-save-folder: "/downloads/AAC"
 mv-save-folder: "/downloads/MV"
-max-memory-limit: 256 # MB
-# wrapper-lite HTTP API endpoint (provides /m3u8 /key /lyrics /webplayback /license /status)
-lite-server: "http://wrapper-lite:12340"
 
-# set to 'true' to exit on error instead of requiring manual intervention. (for using this program in scripts)
-exit-on-error: true   # amdl-web: 必须为 true，否则任务出错会阻塞等 stdin
-
-#set 'all' to retrieve all m3u8, and set 'hires' to only detect hires m3u8.
-get-m3u8-mode: hires # all hires
-aac-type: aac-lc # aac-lc aac aac-binaural aac-downmix
-alac-max: 192000  #192000 96000 48000 44100
-atmos-max: 2768  #2768 2448
-limit-max: 200
-
-#{AlbumId} {AlbumName} {ArtistName} {ReleaseDate} {ReleaseYear} {UPC} {Copyright} {Quality} {Codec} {Tag} {RecordLabel}
-#example: {ReleaseYear} - {ArtistName} - {AlbumName}({AlbumId})({UPC})({Copyright}){Codec}
+# 专辑目录：{AlbumId} {AlbumName} {ArtistName} {ReleaseDate} {ReleaseYear}
+#           {UPC} {Copyright} {Quality} {Codec} {Tag} {RecordLabel}
 album-folder-format: "{AlbumName}"
-
-#{PlaylistId} {PlaylistName} {ArtistName} {Quality} {Codec} {Tag}
+# 播放列表目录：{PlaylistId} {PlaylistName} {ArtistName} {Quality} {Codec} {Tag}
 playlist-folder-format: "{PlaylistName}"
-
-#{SongId} {SongNumer} {ArtistName} {SongName} {DiscNumber} {TrackNumber} {Quality} {Codec} {Tag}
-#example: Disk {DiscNumber} - Track {TrackNumber} {SongName} [{Quality}]{{Tag}}"
+# 曲目文件名：{SongId} {SongNumer} {ArtistName} {SongName} {DiscNumber}
+#             {TrackNumber} {Quality} {Codec} {Tag}
 song-file-format: "{SongNumer}. {SongName}"
-
-#{ArtistId} {ArtistName}/{UrlArtistName}
-#if artist-folder-format set "",will not make artist folder
+# 艺人目录：{ArtistId} {ArtistName} {UrlArtistName}；设为 "" 则不建艺人目录
 artist-folder-format: "{UrlArtistName}"
 
-#if set "" will not add tag
-explicit-choice : "[E]"
-clean-choice : "[C]"
-apple-master-choice : "[M]"
+# 标签里的后缀（设为 "" 则不加）
+explicit-choice: "[E]"      # 露骨内容
+clean-choice: "[C]"         # 清洁版
+apple-master-choice: "[M]"  # Apple Digital Master
 
-#if set true,for playlst,will use songinfo for meta #albumname track disk
-use-songinfo-for-playlist: false
+tag-sort-order: true       # 写入排序用标签（sort 系列）
+tag-itunes-id: true        # 写入 iTunes/Apple 的 id 标签
+use-songinfo-for-playlist: false   # 播放列表：元数据用歌曲自身信息（而非专辑）
+dl-albumcover-for-playlist: false  # 播放列表：额外下载专辑封面
 
-#if set true,will download album cover for playlist
-dl-albumcover-for-playlist: false
-mv-audio-type: atmos  #atmos ac3 aac
-mv-max: 2160
+# ── 音乐视频（MV）──────────────────────────────────────────────────────────
+mv-audio-type: atmos      # atmos ac3 aac
+mv-max: 2160              # 最高分辨率
 
-# storefront will be used only in searching. 
-# storefront is the 2-letter country code that are available in the urls (jp, ca, us etc.).
-# if your account is from Japan, you must use jp.
-# if the storefront is different from your account, you will see a "failed to get lyrics" error in most of the songs. By default the storefront is set to US if not set.
-storefront: "us"   # 店铺地区，需与账号一致（jp/us/cn…）
-alac-fix: true                    # Patch malformed ALAC packets
+# ── 下载后转码（需要 ffmpeg，镜像里已内置）──────────────────────────────────
+convert-after-download: false
+convert-format: "flac"            # flac | mp3 | opus | wav | copy（仅换容器）
+convert-keep-original: false      # 保留原文件
+convert-skip-if-source-matches: true   # 已经是目标格式就跳过
+convert-with-metadata: true       # 转换后保留元数据
+convert-extra-args: ""            # 追加原始参数（高级用法）
+ffmpeg-path: "ffmpeg"             # 不在 PATH 时改写这里
+# 有损转无损的告警与处理
+convert-warn-lossy-to-lossy: true
+convert-warn-lossy-to-lossless: true
+convert-skip-lossy-to-lossless: true   # 有损源转 flac/wav 时直接跳过
+convert-check-bad-alac: false          # 检查 ALAC 是否损坏
+convert-delete-bad-alac: false         # 损坏则删除
 
-# Conversion settings
-convert-after-download: false     # Enable post-download conversion (requires ffmpeg)
-convert-format: "flac"            # flac | mp3 | opus | wav | copy (no re-encode)
-convert-keep-original: false       # Keep original file after successful conversion
-convert-skip-if-source-matches: true  # If already in target format, skip
-ffmpeg-path: "ffmpeg"             # Override if ffmpeg is not in PATH
-convert-extra-args: ""            # Additional raw args appended (advanced)
-convert-with-metadata: true      # If true, keep the same metadata in converted files
-
-# Conversion warnings and behavior
-convert-warn-lossy-to-lossless: true # If true, print a warning when converting a detected lossy source to a lossless container
-convert-skip-lossy-to-lossless: true # If true, skip converting detected lossy sources to lossless target formats (flac/wav)
-convert-check-bad-alac: false # If true, check and report if ALAC is damaged
-convert-delete-bad-alac: false # If true, delete if ALAC is damaged
-
-# ---------------------------------------------------------------------------
-# Proxy — Fix for Cloud Servers Blocked by Apple Music API
-# Errors fixed: "503 Service Unavailable" / "Failed to get song response." /
-#               "failed to get lyrics"
-# See full guide: PROXY-SETUP.md
-# ---------------------------------------------------------------------------
-#
-# Supported formats:
-#   proxy: ""                          # No proxy (default — local PC)
-#   proxy: "socks5://127.0.0.1:1080"  # SOCKS5 proxy (Cloudflare WARP / SSH tunnel)
-#   proxy: "http://127.0.0.1:3128"    # HTTP proxy
-#
-# ---------------------------------------------------------------------------
+# ── 网络 ────────────────────────────────────────────────────────────────────
+# 引擎访问 amp-api 用的代理（元数据请求）。容器级出网代理在 .env 的 HTTP(S)_PROXY。
+#   proxy: "socks5://127.0.0.1:1080"
+#   proxy: "http://127.0.0.1:3128"
+# 留空 = 直连。云端 IP 被 Apple 拦（503 / Failed to get song response）时才需要。
 proxy: ""
+
+# ── 由本服务在每次任务时强制覆盖的两个键（写在下面只为说明）────────────────────
+# lite-server: "http://wrapper-lite:12340"   # 解密后端地址，取自 .env 的 LITE_SERVER
+# exit-on-error: true                        # 必须 true，否则引擎出错会阻塞等 stdin

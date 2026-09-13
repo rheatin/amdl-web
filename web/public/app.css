@@ -154,11 +154,14 @@ code {
     transform: translateY(-1px);
     box-shadow: 0 9px 22px -8px rgba(122, 162, 247, 0.95), 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
 }
+/* 字标：整体是一个词，不能断开排版。
+   注意不要用 inline-flex —— 那会把文本节点与 span 变成两个 flex 项，
+   "amdl" 与 "-web" 之间会凭空出现空隙（看起来像 "amdl -web"）。 */
 .brand .wordmark {
-    display: inline-flex;
-    align-items: baseline;
+    display: inline;
+    white-space: nowrap;
 }
-/* 字标：主名实心、后缀弱化 —— 不再用强调色，避免“模板感” */
+/* 后缀弱化，但连字符留在前段，读作一个完整品牌名 */
 .brand .wm-tail {
     color: var(--fg-dim);
     font-weight: 500;
@@ -685,6 +688,53 @@ button.danger {
     text-align: center;
     color: var(--fg-dim);
     background: var(--bg-soft);
+}
+
+/* ---- 只读配置视图（配置页）---- */
+
+.kv {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 6px 14px;
+    margin: 14px 0;
+    align-items: center;
+}
+.kv dt {
+    margin: 0;
+}
+.kv dd {
+    margin: 0;
+    color: var(--fg-dim);
+}
+
+.code {
+    margin: 12px 0 6px;
+    padding: 14px;
+    max-height: 460px;
+    overflow: auto;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    white-space: pre;
+    tab-size: 4;
+}
+
+/* 临时覆盖：未勾选时整块变灰并禁用（仍可见，方便看清楚会覆盖什么） */
+fieldset.opt-grid {
+    border: 0;
+    margin: 10px 0 0;
+    padding: 0;
+}
+fieldset.opt-grid.off {
+    opacity: 0.45;
+    filter: saturate(0.6);
+}
+fieldset.opt-grid:disabled,
+fieldset.opt-grid.off label {
+    cursor: not-allowed;
 }
 
 @media (max-width: 640px) {

@@ -36,18 +36,18 @@ export const DEFAULT_JOB_OPTIONS: JobOptions = {
     lrcFormat: "lrc"
 };
 
-/** 白名单校验：只接受已知取值，未知一律回落到默认值。 */
-export function sanitizeJobOptions(input: unknown): JobOptions {
+/** 白名单校验：只接受已知取值；缺失的键以 base 为准（默认取内置默认值）。 */
+export function sanitizeJobOptions(input: unknown, base: JobOptions = DEFAULT_JOB_OPTIONS): JobOptions {
     const o = (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>;
     return {
-        embedLrc: o["embedLrc"] === undefined ? DEFAULT_JOB_OPTIONS.embedLrc : Boolean(o["embedLrc"]),
-        saveLrcFile: Boolean(o["saveLrcFile"]),
-        lrcType: o["lrcType"] === "syllable-lyrics" ? "syllable-lyrics" : "lyrics",
+        embedLrc: o["embedLrc"] === undefined ? base.embedLrc : Boolean(o["embedLrc"]),
+        saveLrcFile: o["saveLrcFile"] === undefined ? base.saveLrcFile : Boolean(o["saveLrcFile"]),
+        lrcType: o["lrcType"] === "syllable-lyrics" ? "syllable-lyrics" : o["lrcType"] === "lyrics" ? "lyrics" : base.lrcType,
         lrcExtra:
-            o["lrcExtra"] === "translation" || o["lrcExtra"] === "pronunciation"
-                ? o["lrcExtra"]
-                : "",
-        lrcFormat: o["lrcFormat"] === "ttml" ? "ttml" : "lrc"
+            o["lrcExtra"] === "translation" || o["lrcExtra"] === "pronunciation" || o["lrcExtra"] === ""
+                ? (o["lrcExtra"] as JobOptions["lrcExtra"])
+                : base.lrcExtra,
+        lrcFormat: o["lrcFormat"] === "ttml" ? "ttml" : o["lrcFormat"] === "lrc" ? "lrc" : base.lrcFormat
     };
 }
 
@@ -58,8 +58,12 @@ export type Job = {
     url: string;
     /** "alac" | "atmos" | "aac" */
     codec: string;
-    /** 该任务的下载选项（歌词等） */
-    options: JobOptions;
+    /**
+     * 本任务**显式**给出的下载选项（歌词一族）。
+     * 空对象 = 完全按引擎 config.yaml 执行；这里永远不写内置默认值，
+     * 否则会把用户的 config.yaml 覆盖掉（见 ripper.writeJobConfig）。
+     */
+    options: Partial<JobOptions>;
     status: JobStatus;
     createdAt: number;
     startedAt?: number;
@@ -142,13 +146,17 @@ export const store = {
         persist();
     },
 
+    /* ------------------------------------------------------------ 设置 */
+    /* 说明：本服务不再持有可写的「站点设置」——下载语义全部以引擎 config.yaml 为准，
+     * 网页只做只读展示，任务级选项随任务提交（见 ripper.ts / engineconf.ts）。 */
+
     jobs(): Job[] {
         return db.jobs;
     },
     job(id: number): Job | undefined {
         return db.jobs.find((j) => j.id === id);
     },
-    addJob(userId: number, url: string, codec: string, options: JobOptions = DEFAULT_JOB_OPTIONS): Job {
+    addJob(userId: number, url: string, codec: string, options: Partial<JobOptions> = {}): Job {
         const job: Job = {
             id: nextId(db.jobs),
             userId,

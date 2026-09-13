@@ -91,18 +91,36 @@ services:
       MUSIC_DIR: /downloads
       ENGINE_DIR: /engine
       LITE_SERVER: http://wrapper-lite:12340
+      # 地区/语言以 /engine/config.yaml 为准，这两项只是兜底（见 .env.example）
       STOREFRONT: ${STOREFRONT:-us}
       LANGUAGE: ${LANGUAGE:-en-US}
       # 留空则打开 /login 由页面创建首个管理员
       ADMIN_USER: ${ADMIN_USER:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
+      SESSION_DAYS: ${SESSION_DAYS:-30}
+      # 反向代理后置 true，才会信任 X-Forwarded-* 头
+      TRUST_PROXY: ${TRUST_PROXY:-false}
       JOB_CONCURRENCY: ${JOB_CONCURRENCY:-1}
       JOB_TIMEOUT_SEC: ${JOB_TIMEOUT_SEC:-7200}
+      JOB_LOG_LINES: ${JOB_LOG_LINES:-2000}
+      # 下载后文件权限（八进制；keep = 不改动引擎默认的 600）
+      FILE_MODE: ${FILE_MODE:-666}
+      # 与宿主目录属主保持一致（要同时改 compose 的 user:），仅用于自检提示
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-100}
+      # 时区：影响日志时间与文件 mtime
+      TZ: ${TZ:-UTC}
+      # 出网代理（引擎下载走系统代理）；留空=直连
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
       # wrapper-lite 的 data 目录（只用于写 2fa.txt）
       WRAPPER_DATA_DIR: /wrapper-data
     volumes:
-      # 引擎读 config.yaml（含 exit-on-error: true / lite-server / 落盘目录）
+      # 引擎的配置 —— 下载语义（音质/歌词/命名/转码/地区/Apple 凭据）的唯一出处。
+      # 每个任务都会复制这份文件再叠加几个覆盖键，所以这里的改动对新任务立即生效。
+      # 注意：单文件 bind mount 绑定的是 inode，**原地编辑后必须重启容器**才看得到。
       - ./config.yaml:/engine/config.yaml:ro
       # 前端自身状态（账号、任务记录、会话密钥）
       - ./data/web:/data

@@ -21,31 +21,38 @@
         </div>
 
         <details class="opts">
-            <summary>歌词 / 高级选项</summary>
-            <div class="opt-grid">
-                <label class="chk"><input type="checkbox" name="embedLrc" checked> 嵌入歌词到文件</label>
-                <label class="chk"><input type="checkbox" name="saveLrcFile"> 另外保存 .lrc 文件</label>
+            <summary>本次任务临时覆盖（可选）</summary>
+            <label class="chk">
+                <input type="checkbox" id="opts-override"> 对本次下载临时生效（不写入 config.yaml）
+            </label>
+            <fieldset id="opts-box" class="opt-grid">
+                <label class="chk"><input type="checkbox" name="embedLrc" <%= opts.embedLrc ? "checked" : "" %>> 嵌入歌词到文件</label>
+                <label class="chk"><input type="checkbox" name="saveLrcFile" <%= opts.saveLrcFile ? "checked" : "" %>> 另外保存 .lrc 文件</label>
                 <label>歌词类型
                     <select name="lrcType">
-                        <option value="lyrics">逐行</option>
-                        <option value="syllable-lyrics">逐字（带时间轴）</option>
+                        <option value="lyrics" <%= opts.lrcType === "lyrics" ? "selected" : "" %>>逐行</option>
+                        <option value="syllable-lyrics" <%= opts.lrcType === "syllable-lyrics" ? "selected" : "" %>>逐字（带时间轴）</option>
                     </select>
                 </label>
                 <label>附加内容
                     <select name="lrcExtra">
-                        <option value="">无</option>
-                        <option value="translation">翻译</option>
-                        <option value="pronunciation">罗马音</option>
+                        <option value="" <%= opts.lrcExtra === "" ? "selected" : "" %>>无</option>
+                        <option value="translation" <%= opts.lrcExtra === "translation" ? "selected" : "" %>>翻译</option>
+                        <option value="pronunciation" <%= opts.lrcExtra === "pronunciation" ? "selected" : "" %>>罗马音</option>
                     </select>
                 </label>
                 <label>歌词格式
                     <select name="lrcFormat">
-                        <option value="lrc">lrc</option>
-                        <option value="ttml">ttml</option>
+                        <option value="lrc" <%= opts.lrcFormat === "lrc" ? "selected" : "" %>>lrc</option>
+                        <option value="ttml" <%= opts.lrcFormat === "ttml" ? "selected" : "" %>>ttml</option>
                     </select>
                 </label>
-            </div>
-            <p class="muted small">这些选项按任务覆盖引擎的 config.yaml（引擎从进程工作目录读配置，因此每个任务用独立配置）。</p>
+            </fieldset>
+            <p class="muted small">
+                默认<strong>不勾选</strong>：任务完全按引擎 <code>config.yaml</code> 执行。
+                勾选后这一个任务会覆盖上面的几项，<strong>只影响本次</strong>，不改任何配置文件。
+                上面的取值就是 <code>config.yaml</code> 当前的有效值，正在生效中。
+            </p>
         </details>
     </form>
     <p id="job-form-msg" class="muted"></p>

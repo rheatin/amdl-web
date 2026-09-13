@@ -12,6 +12,13 @@
  *     which is what makes per-job options possible: we materialise a private config.yaml
  *     for each job and run the engine with that directory as its cwd.
  *
+ * 配置分层的落实点（见 config.ts 顶部说明）：
+ *   基础 = 用户的 config.yaml **原样**（下载语义的唯一出处，注释与未知键都保留）；
+ *   覆盖 = 只有两类：本服务必须掌握的键（lite-server / exit-on-error），
+ *          以及本次任务**显式**给出的临时选项（歌词一族）。
+ *   没被显式给出的键一律不动 —— 引擎会用 config.yaml 的值，绝不用本服务的内置默认值
+ *   去覆盖用户的文件。
+ *
  * Keeping this behind one module is deliberate: replacing the engine with a
  * hand-written ripper later means reimplementing only this file.
  */
@@ -19,7 +26,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
-import { DEFAULT_JOB_OPTIONS, type Job, type JobOptions, type Track } from "./store.js";
+import { applyOverrides, loadEngineConfig, type OverrideValue } from "./engineconf.js";
+import { store, type Job, type JobOptions, type Track } from "./store.js";
 
 export type RipResult = {
     ok: boolean;
@@ -39,54 +47,34 @@ export function jobConfigDir(jobId: number): string {
     return path.join(config.dataDir, "jobcfg", String(jobId));
 }
 
-/**
- * 读取基础配置：优先 config.yaml，其次 config.example.yaml。
- *
- * 后者是必需的兜底 —— 若用户没有创建 config.yaml，bind mount 的目标会被 Docker
- * 建成**目录**，此时读 config.yaml 必然失败；有 example 兜底整套仍然可用。
- */
-function readBaseConfig(): string {
-    for (const name of ["config.yaml", "config.example.yaml"]) {
-        const p = path.join(config.engineDir, name);
-        try {
-            if (fs.statSync(p).isFile()) return fs.readFileSync(p, "utf8");
-        } catch {
-            /* 试下一个 */
-        }
-    }
-    throw new Error(`在 ${config.engineDir} 下找不到 config.yaml 或 config.example.yaml`);
+/** 本服务必须掌握的键（无论用户的 config.yaml 怎么写）。 */
+const FORCED: Array<[string, OverrideValue]> = [
+    ["lite-server", config.liteServer],
+    ["exit-on-error", true] // 裸 bool：引擎的字段是 bool，写成字符串会解析失败
+];
+
+/** 任务选项 → 引擎键。只包含**本次任务显式给出**的键。 */
+function jobOverrides(opts: Partial<JobOptions>): Array<[string, OverrideValue]> {
+    const out: Array<[string, OverrideValue]> = [];
+    if (opts.embedLrc !== undefined) out.push(["embed-lrc", opts.embedLrc]);
+    if (opts.saveLrcFile !== undefined) out.push(["save-lrc-file", opts.saveLrcFile]);
+    if (opts.lrcType !== undefined) out.push(["lrc-type", opts.lrcType]);
+    if (opts.lrcExtra !== undefined) out.push(["lrc-extra", opts.lrcExtra]);
+    if (opts.lrcFormat !== undefined) out.push(["lrc-format", opts.lrcFormat]);
+    return out;
 }
 
 /**
- * 复制基础 config.yaml 并按任务选项覆盖若干键，返回该目录。
- *
- * 覆盖方式刻意保持“朴素”：按 `^key:` 逐行替换字符串，不做 YAML 解析 —— 引擎的配置是
- * 扁平的 key: value 结构，这样既能保证未知键不丢失，也不引入额外依赖。
+ * 复制基础 config.yaml 并套用覆盖项，写入任务私有目录后返回该目录。
+ * 覆盖方式见 engineconf.applyOverrides（逐行替换，未命中则追加，不解析整份 YAML）。
  */
 export function writeJobConfig(job: Job): string {
-    const opts: JobOptions = { ...DEFAULT_JOB_OPTIONS, ...(job.options ?? {}) };
-    const base = readBaseConfig();
-
-    const q = (s: string): string => `"${s.replace(/"/g, '\\"')}"`;
-    const overrides: Array<[string, string]> = [
-        ["lite-server", q(config.liteServer)],
-        ["embed-lrc", String(opts.embedLrc)],
-        ["save-lrc-file", String(opts.saveLrcFile)],
-        ["lrc-type", q(opts.lrcType)],
-        ["lrc-extra", q(opts.lrcExtra)],
-        ["lrc-format", q(opts.lrcFormat)]
-    ];
-
-    let out = base;
-    for (const [key, value] of overrides) {
-        const re = new RegExp(`^${key}:.*$`, "m");
-        if (re.test(out)) out = out.replace(re, `${key}: ${value}`);
-        else out += `${out.endsWith("\n") ? "" : "\n"}${key}: ${value}\n`;
-    }
+    const base = loadEngineConfig(config.engineDir).text;
+    const overrides = [...FORCED, ...jobOverrides(job.options ?? {})];
 
     const dir = jobConfigDir(job.id);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, "config.yaml"), out);
+    fs.writeFileSync(path.join(dir, "config.yaml"), applyOverrides(base, overrides));
     return dir;
 }
 
@@ -100,10 +88,9 @@ export function rip(job: Job, onLine: (line: string) => void): Promise<RipResult
     let cwd = config.engineDir;
     try {
         cwd = writeJobConfig(job);
-        onLine(`[amdl-web] 本次任务配置：歌词嵌入=${job.options?.embedLrc ?? true} · ` +
-            `另存 lrc=${job.options?.saveLrcFile ?? false} · ` +
-            `类型=${job.options?.lrcType ?? "lyrics"} · ` +
-            `附加=${job.options?.lrcExtra || "无"} · 格式=${job.options?.lrcFormat ?? "lrc"}`);
+        const shown = jobOverrides(job.options ?? {}).map(([k, v]) => `${k}=${v}`).join(" · ");
+        onLine(`[amdl-web] 基线 = config.yaml（${engineConfigPath()}）` +
+            (shown ? ` · 本任务覆盖：${shown}` : " · 本任务无覆盖项"));
     } catch (err) {
         onLine(`[amdl-web] 生成任务配置失败，回退到全局 config.yaml：${String(err)}`);
     }

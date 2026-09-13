@@ -54,8 +54,21 @@ if (jobForm) {
     const resultEl = document.getElementById("parse-result");
     const downloadRow = document.getElementById("download-row");
     const parseBtn = document.getElementById("parse-btn");
+    const overrideChk = document.getElementById("opts-override");
+    const overrideBox = document.getElementById("opts-box");
     let parsed = false;   // 只有解析成功（或明确回落）后才允许下载
     let debounce;
+
+    // 临时覆盖开关：关掉 = 请求里不带 options，引擎完全按 config.yaml 执行
+    const syncOverride = () => {
+        if (!overrideChk || !overrideBox) return;
+        overrideBox.disabled = !overrideChk.checked;
+        overrideBox.classList.toggle("off", !overrideChk.checked);
+    };
+    if (overrideChk) {
+        overrideChk.addEventListener("change", syncOverride);
+        syncOverride();
+    }
 
     const setResult = (html, cls) => {
         if (!resultEl) return;
@@ -120,15 +133,19 @@ if (jobForm) {
         }
         const url = urlInput.value.trim();
         const codec = jobForm.elements.codec.value;
-        const options = {
-            embedLrc: jobForm.elements.embedLrc.checked,
-            saveLrcFile: jobForm.elements.saveLrcFile.checked,
-            lrcType: jobForm.elements.lrcType.value,
-            lrcExtra: jobForm.elements.lrcExtra.value,
-            lrcFormat: jobForm.elements.lrcFormat.value
-        };
+        // 只有勾了「本次任务临时覆盖」才带 options；否则服务端完全不写任务配置
+        const body = { url, codec };
+        if (overrideChk && overrideChk.checked) {
+            body.options = {
+                embedLrc: jobForm.elements.embedLrc.checked,
+                saveLrcFile: jobForm.elements.saveLrcFile.checked,
+                lrcType: jobForm.elements.lrcType.value,
+                lrcExtra: jobForm.elements.lrcExtra.value,
+                lrcFormat: jobForm.elements.lrcFormat.value
+            };
+        }
         try {
-            const { job } = await postJson("/api/jobs", { url, codec, options });
+            const { job } = await postJson("/api/jobs", body);
             window.location.href = `/jobs?job=${job.id}`;
         } catch (err) {
             toast(`创建失败：${err.message}`);
@@ -169,7 +186,22 @@ if (setupForm) {
     });
 }
 
-/* ---- 设置页：提交 Apple 2FA 验证码 ---- */
+/* ---- 配置页：只读展示（没有保存按钮 —— 改配置请编辑文件后重启容器）---- */
+document.querySelectorAll("[data-copy]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+        const sel = btn.getAttribute("data-copy");
+        const el = sel ? document.querySelector(sel) : null;
+        if (!el) return;
+        try {
+            await navigator.clipboard.writeText(el.textContent || "");
+            toast("已复制到剪贴板");
+        } catch {
+            toast("复制失败：浏览器拒绝了剪贴板访问");
+        }
+    });
+});
+
+/* ---- 配置页：提交 Apple 2FA 验证码 ---- */
 const tfaForm = document.getElementById("tfa-form");
 if (tfaForm) {
     tfaForm.addEventListener("submit", async (ev) => {

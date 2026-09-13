@@ -92,9 +92,10 @@ docker compose up -d
 
 ### Connecting your Apple account
 
-Edit `.env`:
+Account login is handled by **wrapper-lite** (this section is only about decryption rights):
 
 ```ini
+# .env — needed for the first login; the session is cached under data/wrapper/ afterwards
 USERNAME=your-apple-id@example.com
 PASSWORD=your-apple-password
 ```
@@ -108,22 +109,46 @@ docker compose logs -f wrapper-lite
 - After a successful login the session is cached under `data/wrapper/`, so **the password can be left
   empty afterwards**.
 - If Apple asks for **2FA**, the container log says so — submit the 6-digit code on the web UI's
-  Settings page.
-- The frontend never stores or handles your Apple credentials; they are passed only to the wrapper container.
+  **Config** page (the UI writes `data/wrapper/2fa.txt`, which wrapper-lite polls).
+- Your Apple **media tokens** (`media-user-token` / `authorization-token`) are download-related and
+  live in `config.yaml` — see the next section.
 
-## ⚙️ Configuration (`.env`)
+## ⚙️ Configuration layers
+
+Three places, each with exactly one job:
+
+| What | Where | How to change |
+|---|---|---|
+| **Deployment**: port, bind address, paths, permissions, timezone, egress proxy, concurrency, timeouts, admin password, sessions | `.env` | edit the file, then `docker compose up -d` |
+| **Download semantics**: quality, lyrics, artwork, naming templates, conversion, storefront/language, Apple credentials | `config.yaml` (engine config) | edit the file, then **restart the container** (a single-file bind mount follows the inode) |
+| **One-off overrides**: lyrics flags for a single job | web UI → "per-job override" | tick it; nothing is persisted |
+
+The web UI's **Config** page renders all of the above **read-only** (credentials masked), including the
+effective `storefront` / `language` and the whole `config.yaml` — no need to SSH into the host to check.
+
+### `.env` keys
 
 | Key | Default | Description |
 |---|---|---|
-| `USERNAME` / `PASSWORD` | — | Apple ID (only needed for the wrapper's first login) |
+| `USERNAME` / `PASSWORD` | — | Apple ID (only needed for wrapper-lite's first login) |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | empty | Site admin; leave empty to create it from the web UI |
-| `SESSION_SECRET` | auto | Session signing key (persisted to `data/web/session.secret` when empty) |
+| `SESSION_SECRET` / `SESSION_DAYS` | auto / `30` | Session signing key and lifetime |
 | `MUSIC_DIR` | `./music` | Output directory on the host |
-| `STOREFRONT` / `LANGUAGE` | `us` / `en-US` | Storefront and metadata language |
 | `WEB_BIND` / `WEB_PORT` | `0.0.0.0` / `2000` | Web listener |
-| `JOB_CONCURRENCY` | `1` | Concurrent jobs (Apple rate-limits by IP; keep at 1) |
+| `TRUST_PROXY` | `false` | Set `true` behind a reverse proxy to trust `X-Forwarded-*` |
+| `TZ` | `UTC` | Timezone (log timestamps, file mtimes) |
+| `PUID` / `PGID` | `1000` / `100` | Expected host ownership (must match compose's `user:`; shown for self-check only) |
 | `FILE_MODE` | `666` | Permission applied to downloaded files; `keep` keeps the engine default `600` |
+| `JOB_CONCURRENCY` | `1` | Concurrent jobs (Apple rate-limits by IP; keep at 1) |
 | `JOB_TIMEOUT_SEC` / `JOB_LOG_LINES` | `7200` / `2000` | Per-job timeout and retained log lines |
+| `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | empty | Egress proxy (the engine downloads media through the system proxy) |
+| `STOREFRONT` / `LANGUAGE` | `us` / `en-US` | **Fallback only** — `config.yaml` wins when it sets them |
+
+### `config.yaml` keys
+
+See `config.example.yaml` in the repo root: a fully commented template covering 50+ keys
+(`alac-max`, `lrc-type`, `convert-*`, `tag-*`, `save-animated-artwork`, `proxy`, …). Treat it as
+**the engine's config file** rather than this project's, so new upstream keys work without code changes.
 
 ## 🔌 HTTP API
 
@@ -134,9 +159,13 @@ docker compose logs -f wrapper-lite
 | POST | `/api/login` · `/api/logout` | Session |
 | GET | `/api/codecs?url=` | Resolve a link and return its **real available codecs** |
 | GET | `/api/search?q=` | Apple Music catalog search |
-| GET | `/api/jobs` · POST `/api/jobs` | List / create jobs (lyrics options supported) |
+| GET | `/api/jobs` · POST `/api/jobs` | List / create jobs (keys inside `options` = per-job overrides) |
 | GET | `/api/jobs/:id/events` | SSE: `hello` / `log` / `status` |
+| GET | `/api/config` | Read-only config snapshot (credentials masked) |
 | POST | `/api/apple/2fa` | Submit the Apple 2FA code |
+
+> There is deliberately no config write endpoint: config lives in files, or is a per-job override
+> that lasts for exactly one download.
 
 ## 🧱 Build changes relative to upstream
 

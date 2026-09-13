@@ -13,9 +13,12 @@ import {
     seedAdmin,
     verifyPassword
 } from "./auth.js";
-import { config } from "./config.js";
+import { config, language, storefront } from "./config.js";
+import { explicitJobOptions } from "./jobopts.js";
 import { enqueue, queueDepth, reconcileOnBoot, subscribe } from "./queue.js";
-import { sanitizeJobOptions, store } from "./store.js";
+import { engineConfigPath } from "./ripper.js";
+import { lyricOptionsFromConfig, maskConfigText, SECRET_KEYS, tryLoadEngineConfig } from "./engineconf.js";
+import { store } from "./store.js";
 import { parseAppleMusicUrl } from "./urlinfo.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -84,6 +87,8 @@ app.get("/", requireAuth, (_req: Request, res: Response) => {
         jobs: store.jobs().slice(-8).reverse(),
         tracks: store.allTracks().slice(0, 8),
         queue: queueDepth(),
+        // 表单里的歌词控件按 config.yaml 预填 —— 用户看到的就是真正生效的值
+        opts: lyricOptionsFromConfig(),
         config
     });
 });
@@ -113,8 +118,28 @@ app.get("/library", requireAuth, (_req: Request, res: Response) => {
     res.render("library", { tracks: store.allTracks(), musicDir: config.musicDir, config });
 });
 
+/**
+ * 「设置」页 = 只读的配置视图。
+ *
+ * 这里刻意**不可编辑**：下载语义以引擎 config.yaml 为唯一出处（用户直接编辑文件），
+ * 部署相关的参数在 .env 里。网页只告诉你「现在实际生效的是什么、在哪里改」，
+ * 避免出现第二份真相（两份配置互相覆盖是之前踩过的坑）。
+ */
 app.get("/settings", requireAuth, (_req: Request, res: Response) => {
-    res.render("settings", { config, queue: queueDepth() });
+    const engine = tryLoadEngineConfig();
+    res.render("settings", {
+        config,
+        queue: queueDepth(),
+        storefront: storefront(),
+        language: language(),
+        engineFile: engine?.file ?? engineConfigPath(),
+        engineText: engine ? maskConfigText(engine.text) : null,
+        engineKeys: engine?.keys ?? [],
+        secrets: SECRET_KEYS.map((k) => ({
+            key: k,
+            set: Boolean((engine?.values[k] ?? "").trim())
+        }))
+    });
 });
 
 /* -------------------------------------------------------------------- api */
@@ -126,7 +151,9 @@ app.get("/healthz", (_req: Request, res: Response) => {
         jobs: store.jobs().length,
         liteServer: config.liteServer,
         engineBin: config.engineBin,
-        musicDir: config.musicDir
+        musicDir: config.musicDir,
+        storefront: storefront(),
+        engineConfig: tryLoadEngineConfig()?.file ?? null
     });
 });
 
@@ -181,6 +208,44 @@ app.get("/api/jobs", requireAuth, (_req: Request, res: Response) => {
     res.json({ jobs: store.jobs(), queue: queueDepth() });
 });
 
+/* --------------------------------------------------------- 配置（只读接口） */
+
+/**
+ * 只读地取回当前生效的配置，便于脚本/自检核对（凭据已打码）。
+ * 没有写接口：改配置请编辑 config.yaml（下载语义）或 .env（部署），改完重启容器。
+ */
+app.get("/api/config", requireAuth, (_req: Request, res: Response) => {
+    const engine = tryLoadEngineConfig();
+    res.json({
+        runtime: {
+            port: config.port,
+            dataDir: config.dataDir,
+            musicDir: config.musicDir,
+            engineDir: config.engineDir,
+            engineBin: config.engineBin,
+            liteServer: config.liteServer,
+            wrapperDataDir: config.wrapperDataDir,
+            concurrency: config.concurrency,
+            jobTimeoutSec: config.jobTimeoutSec,
+            logLines: config.logLines,
+            fileMode: config.fileMode === null ? "keep" : config.fileMode.toString(8),
+            sessionDays: config.sessionDays,
+            trustProxy: config.trustProxy,
+            proxy: config.httpsProxy || config.httpProxy || "",
+            storefront: storefront(),
+            language: language(),
+            tz: process.env["TZ"] ?? ""
+        },
+        engineConfig: {
+            file: engine?.file ?? engineConfigPath(),
+            present: engine !== null,
+            values: engine?.values ?? {}
+        }
+    });
+});
+
+/* --------------------------------------------------------------- 任务接口 */
+
 /**
  * 单曲真实能力查询 —— 让界面里的编码选项来自 Apple 自己的 audioTraits，
  * 而不是三个硬编码选项。拿不到（播放列表/查询失败）时返回全部并附说明。
@@ -196,7 +261,7 @@ app.get("/api/codecs", requireAuth, async (req: Request, res: Response) => {
     try {
         // 先用链接自带的地区查（/cn/ 的曲目查 /us/ 会 404），失败再试默认地区
         let cap = await capabilityFor(link.kind, link.id, link.storefront);
-        if (!cap && link.storefront && link.storefront !== config.storefront) {
+        if (!cap && link.storefront && link.storefront !== storefront()) {
             cap = await capabilityFor(link.kind, link.id);
         }
         if (!cap) {
@@ -253,6 +318,9 @@ app.post("/api/apple/2fa", requireAuth, (req: Request, res: Response) => {
     }
 });
 
+/**
+ * 任务选项的**显式**覆盖 —— 只影响这一个任务，不落盘到任何配置文件（见 jobopts.ts）。
+ */
 app.post("/api/jobs", requireAuth, (req: Request, res: Response) => {
     const url = String(req.body?.url ?? "").trim();
     const codec = String(req.body?.codec ?? "alac").trim();
@@ -265,7 +333,8 @@ app.post("/api/jobs", requireAuth, (req: Request, res: Response) => {
         return;
     }
     const user = res.locals.user as { id: number };
-    const options = sanitizeJobOptions(req.body?.options);
+    // 未给出的键一律不写进任务配置 → 引擎用 config.yaml 的值
+    const options = explicitJobOptions(req.body?.options);
     const job = store.addJob(user.id, url, codec, options);
     enqueue(job);
     res.status(201).json({ job });

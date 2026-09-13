@@ -86,9 +86,10 @@ docker compose up -d
 
 ### 接入 Apple 账号
 
-编辑 `.env`：
+账号登录由 **wrapper-lite** 负责（本节只涉及「解密权限」）。两种方式：
 
 ```ini
+# .env —— 首次登录用，成功后会话会缓存进 data/wrapper/，可以再留空
 USERNAME=your-apple-id@example.com
 PASSWORD=your-apple-password
 ```
@@ -99,23 +100,48 @@ docker compose logs -f wrapper-lite
 ```
 
 - 需要 **Apple Music 付费订阅**。
-- 登录成功后会话会缓存进 `data/wrapper/`，**之后可把密码留空**。
-- 若 Apple 要求 **2FA**：容器日志会提示，到网页「设置」页提交 6 位验证码即可。
-- 前端**不保存、不代持** Apple 凭据；凭据只注入 wrapper 容器。
+- 登录成功后会话缓存在 `data/wrapper/`，**之后可把密码清空**。
+- 若 Apple 要求 **2FA**：容器日志会提示，到网页「配置」页提交 6 位验证码即可
+  （网页写入 `data/wrapper/2fa.txt`，wrapper-lite 轮询读取）。
+- Apple 的 **媒体 token**（`media-user-token` / `authorization-token`）属于「下载相关」，
+  写在 `config.yaml` 里，见下一节。
 
-## ⚙️ 配置（`.env`）
+## ⚙️ 配置分层
+
+只有三个地方，各管一摊，互不重叠：
+
+| 放什么 | 放哪里 | 怎么改 |
+|---|---|---|
+| **部署相关**：端口、绑定、路径、权限、时区、出网代理、并发、任务超时、站点管理员口令、会话 | `.env` | 改文件 → `docker compose up -d` |
+| **下载相关**：音质、歌词、封面、命名模板、转码、地区/语言、Apple 凭据 | `config.yaml`（引擎配置） | 改文件 → **重启容器**（单文件 bind mount 认 inode） |
+| **只影响一次**：本次任务的歌词覆盖等 | 网页「新建下载」里的「本次任务临时覆盖」 | 直接勾选，不落盘 |
+
+网页的「配置」页会**只读**地展示以上全部内容（凭据自动打码），
+包括实际生效的 `storefront` / `language` 与 `config.yaml` 全文 —— 不用登录宿主机就能核对。
+
+### `.env` 键
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `USERNAME` / `PASSWORD` | — | Apple ID（仅 wrapper 首次登录需要） |
+| `USERNAME` / `PASSWORD` | — | Apple ID（仅 wrapper-lite 首次登录需要） |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | 空 | 站点管理员；留空则首次打开网页时创建 |
-| `SESSION_SECRET` | 自动生成 | 会话签名密钥（留空则持久化到 `data/web/session.secret`） |
+| `SESSION_SECRET` / `SESSION_DAYS` | 自动生成 / `30` | 会话签名密钥与有效期 |
 | `MUSIC_DIR` | `./music` | 音乐落盘目录（宿主绝对路径） |
-| `STOREFRONT` / `LANGUAGE` | `us` / `en-US` | 目录搜索与元数据地区 |
 | `WEB_BIND` / `WEB_PORT` | `0.0.0.0` / `2000` | 网页监听 |
-| `JOB_CONCURRENCY` | `1` | 并发任务数（Apple 会按 IP 限流，建议保持 1） |
+| `TRUST_PROXY` | `false` | 反向代理后置 `true` 才信任 `X-Forwarded-*` |
+| `TZ` | `UTC` | 时区（日志时间与文件 mtime） |
+| `PUID` / `PGID` | `1000` / `100` | 期望的宿主属主（需与 compose 的 `user:` 一致；仅用于自检提示） |
 | `FILE_MODE` | `666` | 下载后统一文件权限；`keep` 表示沿用引擎默认 `600` |
+| `JOB_CONCURRENCY` | `1` | 并发任务数（Apple 会按 IP 限流，建议保持 1） |
 | `JOB_TIMEOUT_SEC` / `JOB_LOG_LINES` | `7200` / `2000` | 单任务超时与日志保留行数 |
+| `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | 空 | 出网代理（引擎下载媒体流走系统代理） |
+| `STOREFRONT` / `LANGUAGE` | `us` / `en-US` | **仅兜底**：`config.yaml` 里写了就以那里为准 |
+
+### `config.yaml` 键
+
+见仓库根的 `config.example.yaml`（逐项注释，含 50 余个键：`alac-max`、`lrc-type`、
+`convert-*`、`tag-*`、`save-animated-artwork`、`proxy`…）。把 `config.yaml` 当作
+「引擎的配置文件」而不是「本项目的配置文件」，上游新增的键都能直接用，无需改代码。
 
 ## 🔌 HTTP API
 
@@ -126,9 +152,12 @@ docker compose logs -f wrapper-lite
 | POST | `/api/login` · `/api/logout` | 会话 |
 | GET | `/api/codecs?url=` | 解析链接并返回**真实可用编码** |
 | GET | `/api/search?q=` | Apple Music 目录搜索 |
-| GET | `/api/jobs` · POST `/api/jobs` | 任务列表 / 创建（可带歌词选项） |
+| GET | `/api/jobs` · POST `/api/jobs` | 任务列表 / 创建（`options` 里的键=本次临时覆盖） |
 | GET | `/api/jobs/:id/events` | SSE：`hello` / `log` / `status` |
+| GET | `/api/config` | 只读配置快照（凭据打码） |
 | POST | `/api/apple/2fa` | 提交 Apple 2FA 验证码 |
+
+> 没有写配置的接口：配置要么在文件里，要么是「只对本次任务有效」的覆盖项。
 
 ## 🧱 构建相关改动（相对上游）
 
