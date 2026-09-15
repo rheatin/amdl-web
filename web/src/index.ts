@@ -488,7 +488,7 @@ app.get("/api/jobs/:id/events", requireAuth, (req: Request, res: Response) => {
      * 顺序很讲究：**先订阅、再发 hello**。
      * hello 里带着完整的 job.log，客户端收到后是「覆盖式」渲染；
      * 若在 hello 之后再重放一遍 job.log（早先的实现就是这样），开头几行会在控制台上
-     * 重复出现（用户实际看到过两遍「基线 = config.yaml…」）。
+     * 重复出现（用户实际看到过两遍开头的「引擎配置以 … 为准」）。
      * 但直接在订阅前发 hello 又会漏掉这两步之间产生的日志，所以先订阅、暂存、再补发。
      */
     let live = false;

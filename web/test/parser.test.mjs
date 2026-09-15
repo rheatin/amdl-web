@@ -45,7 +45,7 @@ console.log("PASS  engineArgs flags (alac/atmos/aac + --json + --lite-server)");
 // 有曲目失败时引擎**不会**打印 --json 汇总，这行统计是唯一的成败依据（真实输出见下）
 const REAL_SUMMARY = "=======  [✔ ] Completed: 6/7  |  [⚠ ] Warnings: 0  |  [✖ ] Errors: 1  =======";
 assert.deepEqual(
-    parseSummary(["[amdl-web] 基线 = config.yaml（/engine/config.yaml）", REAL_SUMMARY, "Error detected, exiting..."]),
+    parseSummary(["[amdl-web] 引擎配置以 /engine/config.yaml 为准 · 本次无临时覆盖", REAL_SUMMARY, "Error detected, exiting..."]),
     { completed: 6, total: 7, warnings: 0, errors: 1 }
 );
 assert.equal(parseSummary(["Decrypted", "Track #1: 2752 packets"]), undefined);

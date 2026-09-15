@@ -98,10 +98,12 @@ export function rip(job: Job, onLine: (line: string) => void): Promise<RipResult
     try {
         cwd = writeJobConfig(job);
         const shown = jobOverrides(job.options ?? {}).map(([k, v]) => `${k}=${v}`).join(" · ");
-        onLine(`[amdl-web] 基线 = config.yaml（${engineConfigPath()}）` +
-            (shown ? ` · 本任务覆盖：${shown}` : " · 本任务无覆盖项"));
+        onLine(
+            `[amdl-web] 引擎配置以 ${engineConfigPath()} 为准` +
+                (shown ? ` · 本次临时覆盖 ${shown}` : " · 本次无临时覆盖")
+        );
     } catch (err) {
-        onLine(`[amdl-web] 生成任务配置失败，回退到全局 config.yaml：${String(err)}`);
+        onLine(`[amdl-web] 生成任务配置失败，本次改用 ${engineConfigPath()}：${String(err)}`);
     }
 
     return new Promise<RipResult>((resolve) => {
@@ -131,7 +133,7 @@ export function rip(job: Job, onLine: (line: string) => void): Promise<RipResult
 
         if (config.jobTimeoutSec > 0) {
             timer = setTimeout(() => {
-                onLine(`[amdl-web] job exceeded ${config.jobTimeoutSec}s, killing engine`);
+                onLine(`[amdl-web] 任务已超过 ${config.jobTimeoutSec} 秒，终止引擎`);
                 child.kill("SIGKILL");
                 finish({ ok: false, tracks: [], error: "timeout" });
             }, config.jobTimeoutSec * 1000);
