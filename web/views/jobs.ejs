@@ -13,6 +13,10 @@
                     <a href="/jobs?job=<%= j.id %>">#<%= j.id %></a>
                     <span class="badge <%= j.status %>" data-job-badge="<%= j.id %>"><%= j.status %></span>
                     <span class="muted"><%= j.codec %></span>
+                    <% if (j.region && j.region.requested) { %>
+                        <span class="muted small">地区 <%= j.region.requested %><%= j.region.fallback ? "→" + (j.region.effective || "?") : "" %></span>
+                    <% } %>
+                    <% if (j.region && j.region.fallback) { %><span class="warn small" title="<%= j.region.note %>">已回退</span><% } %>
                     <span class="ellipsis"><%= j.url %></span>
                 </li>
             <% }); %>
@@ -35,8 +39,40 @@
             <% if (selected.error) { %><p class="<%= selected.status === 'partial' ? 'warn' : 'err' %>" id="job-error"><%= selected.error %></p><% } else { %><p class="err" id="job-error" hidden></p><% } %>
             <p class="row">
                 <button class="ghost" type="button" data-retry="<%= selected.id %>">重试这个任务</button>
-                <span class="muted small">已下载的曲目会被引擎跳过，只补失败的那几首</span>
+                <span class="muted small">已下载的曲目会被引擎跳过，只补失败的那几首；地区沿用本任务的记录，不重新探测</span>
             </p>
+            <% if (selected.region) { %>
+                <%
+                const r = selected.region;
+                const reasonLabels = {
+                    none: "跟随链接",
+                    same_region: "与链接一致",
+                    ok: "目标区生效",
+                    matched: "已自动匹配",
+                    not_in_target: "目标区没有 → 已回退",
+                    probe_failed: "探测失败 → 已回退",
+                    unprobed: "未预检（按目标区执行）",
+                    rewrite_failed: "改写失败 → 原链接"
+                };
+                const bad = r.fallback || r.reason === "probe_failed" || r.reason === "rewrite_failed";
+                %>
+                <h3>元数据地区</h3>
+                <p class="muted small">
+                    请求 <code><%= r.requested || "跟随链接" %></code>
+                    → 实际 <code><%= r.effective || "-" %></code>
+                    <span class="badge <%= bad ? 'partial' : 'done' %>"><%= reasonLabels[r.reason] || r.reason %></span>
+                </p>
+                <p class="<%= bad ? 'warn' : 'muted' %> small"><%= r.note %></p>
+                <% if (r.match) { %>
+                    <p class="muted small">
+                        匹配到的记录：<code><%= r.match.id %></code>
+                        <%= r.match.name %> — <%= r.match.artistName %><%= r.match.albumName ? `（${r.match.albumName}）` : "" %>
+                    </p>
+                <% } %>
+                <% if (r.originalUrl && r.originalUrl !== selected.url) { %>
+                    <p class="muted small">你贴的原始链接：<span class="ellipsis"><%= r.originalUrl %></span></p>
+                <% } %>
+            <% } %>
             <h3>本次覆盖</h3>
             <% const overrides = Object.keys(selected.options || {}); %>
             <% if (overrides.length === 0) { %>

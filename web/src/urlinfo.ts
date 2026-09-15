@@ -59,3 +59,47 @@ export function parseAppleMusicUrl(raw: string): AppleLink {
 
     return { kind: "unknown", id: "", storefront: sf, note: "无法从链接中解析出 id" };
 }
+
+/**
+ * 地区码规范化：只认两位字母，统一小写；其它一律视为「没选」。
+ * 服务端只做这一层白名单 —— 具体某区能不能查到，交给目录探测（见 region.ts）。
+ */
+export function normalizeRegion(v: unknown): string | null {
+    if (typeof v !== "string") return null;
+    const s = v.trim().toLowerCase();
+    return /^[a-z]{2}$/.test(s) ? s : null;
+}
+
+/**
+ * 改写链接里的地区段：`/cn/album/x/1` → `/jp/album/x/1`。
+ *
+ * 引擎按 URL 的地区取目录（元数据、也就是文件名与内层标签的来源），
+ * 所以「本次任务用日区元数据」在实现上就是这一句改写。
+ *
+ * 细节：
+ *   * 地区段**缺失**时插到最前面（`/album/x/1` → `/jp/album/x/1`）；
+ *   * query（专辑链接里的 `?i=` 指向具体曲目）与百分号编码原样保留；
+ *   * 非 Apple Music 链接、非法地区码一律返回 null —— 调用方据此回退到原链接，
+ *     绝不要拿一个猜出来的 URL 去建任务。
+ */
+export function swapRegion(rawUrl: string, region: string): string | null {
+    const cc = normalizeRegion(region);
+    if (!cc) return null;
+
+    let url: URL;
+    try {
+        url = new URL(rawUrl.trim());
+    } catch {
+        return null;
+    }
+    if (!/(^|\.)music\.apple\.com$/i.test(url.hostname)) return null;
+
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts.length === 0) return null;
+
+    if (/^[a-z]{2}$/i.test(parts[0])) parts[0] = cc;
+    else parts.unshift(cc);
+
+    url.pathname = `/${parts.join("/")}`;
+    return url.toString();
+}

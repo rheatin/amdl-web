@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
+import type { RegionPlan } from "./region.js";
 
 export type Track = {
     path: string;
@@ -68,6 +69,15 @@ export type Job = {
      * 否则会把用户的 config.yaml 覆盖掉（见 ripper.writeJobConfig）。
      */
     options: Partial<JobOptions>;
+    /**
+     * 元数据地区覆盖的完整记录（含实际执行用的 URL、回退/匹配原因）。
+     *
+     * 两点约定：
+     *   * `url` 字段存的是**实际执行**的 URL（已改写或已回退），所以重试直接克隆本记录即可，
+     *     **不再重新探测** —— 目录会变，不能让同一次重试漂到别的地区/别的记录；
+     *   * 引擎不认识这个字段，它只影响建任务前的 URL 改写与界面展示。
+     */
+    region?: RegionPlan;
     status: JobStatus;
     createdAt: number;
     startedAt?: number;
@@ -160,13 +170,20 @@ export const store = {
     job(id: number): Job | undefined {
         return db.jobs.find((j) => j.id === id);
     },
-    addJob(userId: number, url: string, codec: string, options: Partial<JobOptions> = {}): Job {
+    addJob(
+        userId: number,
+        url: string,
+        codec: string,
+        options: Partial<JobOptions> = {},
+        region?: RegionPlan
+    ): Job {
         const job: Job = {
             id: nextId(db.jobs),
             userId,
             url,
             codec,
             options,
+            ...(region ? { region } : {}),
             status: "queued",
             createdAt: Date.now(),
             tracks: [],

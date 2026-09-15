@@ -27,6 +27,9 @@ open-source components credited below.
 - **Normalized file permissions after download** (default `666`) so media servers running as another uid
   can read the files.
 - **Apple 2FA code can be submitted in the web UI** — no need to touch files on the host.
+- **Per-job metadata region**: pick “Japan jp” and the link is rewritten to that storefront, so file names
+  and tags get the native titles; missing records **fall back** to the link's region with a visible notice,
+  and an optional "auto-find an equivalent record" mode requires a matching artist *and* duration (with risk noted).
 - Lightweight frontend: Express + EJS + a single CSS file, no frontend framework.
 
 ## 🏗 Architecture
@@ -124,10 +127,50 @@ Three places, each with exactly one job:
 |---|---|---|
 | **Deployment**: port, bind address, paths, permissions, timezone, egress proxy, concurrency, timeouts, admin password, sessions | `.env` | edit the file, then `docker compose up -d` |
 | **Download semantics**: quality, lyrics, artwork, naming templates, conversion, storefront/language, Apple credentials | `config.yaml` (engine config) | edit the file, then **restart the container** (a single-file bind mount follows the inode) |
-| **One-off overrides**: lyrics flags for a single job | web UI → "per-job override" | tick it; nothing is persisted |
+| **One-off overrides**: lyrics flags, **metadata region** for a single job | web UI → "per-job override" / "metadata region" | tick it; nothing is persisted |
 
 The web UI's **Config** page renders all of the above **read-only** (credentials masked), including the
 effective `storefront` / `language` and the whole `config.yaml` — no need to SSH into the host to check.
+
+### Metadata region (romanized titles → native titles)
+
+**The problem**: Apple localizes metadata per storefront. The same song appears as `Hanabira` in one
+storefront and `はなびら` in another, and the engine takes **file names and embedded tags straight from
+whichever storefront you queried**.
+
+**The trick**: the engine takes the region **from the URL only** (`checkUrl`); `storefront` in
+`config.yaml` merely affects the engine's own search command. So "use Japanese metadata for this job"
+is implemented as **rewriting the region segment of the link**: pick “metadata region = Japan jp” and the
+server turns `music.apple.com/cn/…` into `music.apple.com/jp/…` before handing it to the engine
+(same catalog record, different metadata).
+
+Three outcomes, all shown **before you press Download**:
+
+| Case | Behaviour |
+|---|---|
+| Target region has the record | Job runs against that region (native titles) |
+| Target region lacks it (catalog 404) | **Falls back** to the link's own region, with the reason shown on the preview and job page |
+| Probe failed (network/token) | Also falls back, but the message says "could not confirm" instead of "not available" — the two are not the same thing |
+
+Playlists and artist links are **not pre-checked** (there is no single "record" to check); they run against
+the target region directly and surface the engine error if that region has nothing.
+
+With **"auto-find an equivalent record"** enabled, the target region is searched first: an alternative
+record is used **only if the artist name matches and the duration is within ±1 s** (e.g. EGOIST's
+*Departures* exists in the JP store as a 2020 reissue with a different id and the native title). If either
+check fails, it **always falls back — it never substitutes**. Search queries widen from
+“artist + full title” to “artist + first word” to “artist only”, because the full romanized title was
+measured to return **zero** results in the JP storefront.
+
+> ⚠️ Risk: many same-name variants exist (covers, live takes, TV-size edits). Artist + duration are the
+> most reliable signals available but are not infallible — after a substitution, verify the landed track
+> name and duration on the job page before deleting the old romanized copy.
+> **Without the checkbox it only falls back, never substitutes.** Auto-matching applies to single-song
+> links only (swapping an album record would change the scope of the job).
+
+> Another verified pitfall: the catalog `language` overrides title language — JP storefront plus
+> `language: en-US` still yields English/romanized titles. Keep `language`/`LANGUAGE` away from `en-US`
+> if you want native titles.
 
 ### `.env` keys
 
@@ -160,9 +203,9 @@ See `config.example.yaml` in the repo root: a fully commented template covering 
 | GET | `/healthz` | Health check (no auth) |
 | POST | `/api/setup` | Create the first admin account |
 | POST | `/api/login` · `/api/logout` | Session |
-| GET | `/api/codecs?url=` | Resolve a link and return its **real available codecs** |
+| GET | `/api/codecs?url=&region=&autoMatch=1` | Resolve a link and return its **real available codecs** plus the region plan (fallback / auto-match) |
 | GET | `/api/search?q=` | Apple Music catalog search |
-| GET | `/api/jobs` · POST `/api/jobs` | List / create jobs (keys inside `options` = per-job overrides) |
+| GET | `/api/jobs` · POST `/api/jobs` | List / create jobs (keys inside `options` = per-job overrides; `region` / `autoMatch` = metadata region) |
 | POST | `/api/jobs/:id/retry` | Retry: clones the job (the engine skips tracks already on disk, so only failures are re-fetched) |
 | GET | `/api/jobs/:id/events` | SSE: `hello` / `log` / `status` |
 | GET | `/api/config` | Read-only config snapshot (credentials masked) |
@@ -212,6 +255,13 @@ curl -sL https://github.com/zhaarey/apple-music-downloader/archive/refs/heads/ma
 - The engine writes files as `600`; this project normalizes them to `FILE_MODE`. If your media server runs
   as another uid, keep `666` or set its `PUID` to the file owner.
 - Apple rate-limits by IP — **do not** raise `JOB_CONCURRENCY`.
+- **Region rewriting only affects metadata, not entitlements**: what you can download is decided by the
+  storefront your account is entitled in; pasting a foreign link does not unlock region-exclusive tracks.
+- **Auto-matching is not foolproof**: it relies on Apple search plus "artist + duration ±1 s", so it may
+  find nothing (then it falls back) and could in theory pick a same-name cover. The job page lists the
+  matched record and the duration delta for you to verify.
+- **Region selection does not pre-check playlists or artists** — they run against the target region and
+  fail visibly if that region has nothing.
 - Job state is kept in a JSON file (atomic writes); swap in SQLite if the volume grows.
 - Only verified on `linux/amd64` (upstream binaries and the static ffmpeg build).
 

@@ -134,10 +134,12 @@ type RawItem = { id?: string; type?: string; attributes?: RawAttrs };
 export async function searchCatalog(
     term: string,
     types = "songs,albums,artists",
-    limit = 12
+    limit = 12,
+    /** 指定目录地区（默认 config.yaml 的 storefront）—— 地区覆盖与自动匹配要用它查目标区 */
+    storefrontOverride?: string
 ): Promise<SearchItem[]> {
     const raw = await catalogGet(
-        `/v1/catalog/${encodeURIComponent(storefront())}/search`,
+        `/v1/catalog/${encodeURIComponent(pickStorefront(storefrontOverride))}/search`,
         { term, types, limit: String(limit), offset: "0" }
     );
     const body = raw as { results?: Record<string, { data?: RawItem[] } | undefined> };
@@ -145,7 +147,10 @@ export async function searchCatalog(
     for (const [kind, group] of Object.entries(body.results ?? {})) {
         for (const item of group?.data ?? []) {
             const a = item.attributes ?? {};
-            const type = item.type ?? kind.replace(/s$/, "");
+            // 搜索响应里每个条目的 type 是**复数**（"songs"/"albums"/"artists"），
+            // 要先去掉复数再归类：否则下面的 order[] 一个都命中不了、排序形同虚设，
+            // 界面上也会显示成 "songs"。调用方（如自动匹配）按单数比较时更会全部落空。
+            const type = (item.type ?? kind).replace(/s$/, "");
             out.push({
                 id: item.id ?? "",
                 type,
@@ -180,6 +185,8 @@ export type TrackCapability = {
     traits: string[];
     /** Which of ALL_CODECS this track actually supports. */
     codecs: Codec[];
+    /** 时长（ms）—— 自动匹配「艺人 + 时长一致」要用（可能缺失） */
+    durationMs?: number;
     /** Human-readable summary for the UI. */
     summary: string;
     /** 能力信息的来源：单曲 / 专辑曲目合集 / 播放列表曲目合集 */
@@ -238,6 +245,7 @@ export async function trackCapability(adamId: string, storefront?: string): Prom
         albumName: a.albumName ?? "",
         traits,
         codecs: mapTraits(traits),
+        durationMs: typeof a.durationInMillis === "number" ? a.durationInMillis : undefined,
         summary: summarizeTraits(traits),
         source: "单曲"
     };

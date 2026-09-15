@@ -56,6 +56,10 @@ if (jobForm) {
     const parseBtn = document.getElementById("parse-btn");
     const overrideChk = document.getElementById("opts-override");
     const overrideBox = document.getElementById("opts-box");
+    const regionSel = document.getElementById("job-region");
+    const autoMatchChk = document.getElementById("job-automatch");
+    const regionNote = document.getElementById("region-note");
+    const REGION_DEFAULT_NOTE = regionNote ? regionNote.innerHTML : "";
     let parsed = false;   // 只有解析成功（或明确回落）后才允许下载
     let debounce;
 
@@ -76,9 +80,29 @@ if (jobForm) {
         resultEl.innerHTML = html;
     };
 
+    /**
+     * 地区提示：服务端已经把「目标区有没有 / 要不要回退 / 有没有自动匹配」判完，
+     * 这里只负责显示。关键是它出现在**点下载之前**，而不是建完任务之后。
+     */
+    const setRegionNote = (plan) => {
+        if (!regionNote) return;
+        if (!plan) {
+            regionNote.className = "parse-result muted small";
+            regionNote.innerHTML = REGION_DEFAULT_NOTE;
+            return;
+        }
+        const bad = plan.fallback || plan.reason === "probe_failed" || plan.reason === "rewrite_failed";
+        const head = plan.requested
+            ? `元数据地区：请求 <b>${plan.requested}</b> → 实际 <b>${plan.effective || "-"}</b>。`
+            : "";
+        regionNote.className = `parse-result small ${bad ? "warn" : plan.requested ? "ok" : "muted"}`;
+        regionNote.innerHTML = `${head}${plan.note || ""}`;
+    };
+
     const resetParse = () => {
         parsed = false;
         if (downloadRow) downloadRow.hidden = true;
+        setRegionNote(null);
     };
 
     const parseNow = async () => {
@@ -90,13 +114,17 @@ if (jobForm) {
         }
         setResult("正在解析链接并查询 Apple 的真实能力…", "muted");
         try {
-            const res = await fetch(`/api/codecs?url=${encodeURIComponent(url)}`);
+            const q = new URLSearchParams({ url });
+            if (regionSel && regionSel.value) q.set("region", regionSel.value);
+            if (autoMatchChk && autoMatchChk.checked) q.set("autoMatch", "1");
+            const res = await fetch(`/api/codecs?${q.toString()}`);
             const data = await res.json();
             if (!res.ok) {
                 resetParse();
                 setResult(`解析失败（HTTP ${res.status}）`, "err");
                 return;
             }
+            setRegionNote(data.plan);
             const codecs = data.codecs && data.codecs.length ? data.codecs : ["alac", "atmos", "aac"];
             renderCodecs(codecs);
             const title = data.title ? `<b>${data.artist ? data.artist + " — " : ""}${data.title}</b> · ` : "";
@@ -112,6 +140,7 @@ if (jobForm) {
         } catch (err) {
             // 网络异常时不彻底拦死：给出全部编码让用户自己决定
             renderCodecs(["alac", "atmos", "aac"]);
+            setRegionNote(null);
             setResult(`解析出错：${err.message}（已回退为全部编码）`, "err");
             parsed = true;
             if (downloadRow) downloadRow.hidden = false;
@@ -124,6 +153,14 @@ if (jobForm) {
         debounce = setTimeout(parseNow, 700);
     });
     if (parseBtn) parseBtn.addEventListener("click", () => { clearTimeout(debounce); parseNow(); });
+    // 地区/自动匹配一改，预览立刻跟着变（否则界面说的和实际做的会不一致）
+    for (const el of [regionSel, autoMatchChk]) {
+        if (!el) continue;
+        el.addEventListener("change", () => {
+            resetParse();
+            if (urlInput.value.trim()) { clearTimeout(debounce); parseNow(); }
+        });
+    }
 
     jobForm.addEventListener("submit", async (ev) => {
         ev.preventDefault();
@@ -135,6 +172,8 @@ if (jobForm) {
         const codec = jobForm.elements.codec.value;
         // 只有勾了「本次任务临时覆盖」才带 options；否则服务端完全不写任务配置
         const body = { url, codec };
+        if (regionSel && regionSel.value) body.region = regionSel.value;
+        if (autoMatchChk && autoMatchChk.checked) body.autoMatch = true;
         if (overrideChk && overrideChk.checked) {
             body.options = {
                 embedLrc: jobForm.elements.embedLrc.checked,
@@ -290,6 +329,9 @@ if (consoleEl) {
     };
 
     const source = new EventSource(`/api/jobs/${jobId}/events`);
+    // 终态是三个：done / partial / failed。早先漏了 partial，
+    // 于是「部分完成」的任务控制台不会收尾（徽章也不会刷新）。
+    const isTerminal = (s) => s === "done" || s === "partial" || s === "failed";
     source.onmessage = (ev) => {
         let data;
         try {
@@ -307,7 +349,7 @@ if (consoleEl) {
                 setBadge(data.job.status);
                 if (countEl && data.job.tracks) countEl.textContent = String(data.job.tracks.length);
                 setError(data.job.error);
-                if (data.job.status === "done" || data.job.status === "failed") {
+                if (isTerminal(data.job.status)) {
                     source.close();
                     refreshBadges();
                 }
@@ -324,7 +366,7 @@ if (consoleEl) {
             setBadge(data.status);
             if (countEl && typeof data.tracks === "number") countEl.textContent = String(data.tracks);
             setError(data.error);
-            if (data.status === "done" || data.status === "failed") {
+            if (isTerminal(data.status)) {
                 source.close();
                 refreshBadges();
             }

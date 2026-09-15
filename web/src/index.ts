@@ -16,10 +16,11 @@ import {
 import { config, language, storefront } from "./config.js";
 import { explicitJobOptions } from "./jobopts.js";
 import { enqueue, queueDepth, reconcileOnBoot, subscribe } from "./queue.js";
+import { resolveRegionPlan, type RegionDeps, type RegionPlan } from "./region.js";
 import { engineConfigPath } from "./ripper.js";
 import { lyricOptionsFromConfig, maskConfigText, SECRET_KEYS, tryLoadEngineConfig } from "./engineconf.js";
 import { store } from "./store.js";
-import { parseAppleMusicUrl } from "./urlinfo.js";
+import { normalizeRegion, parseAppleMusicUrl } from "./urlinfo.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -247,28 +248,94 @@ app.get("/api/config", requireAuth, (_req: Request, res: Response) => {
 /* --------------------------------------------------------------- 任务接口 */
 
 /**
+ * 元数据地区探测的真实依赖（计划逻辑在 region.ts，依赖注入以便离线单测）。
+ *
+ * 三态来自 amp-api 的既有约定（见 ampmusic.catalogGet）：
+ *   200 → 有记录；404 → 返回 null（该区没有）；其它异常 → 抛错（查不动）。
+ */
+const regionDeps: RegionDeps = {
+    async track(kind, id, region) {
+        const cap = await capabilityFor(kind, id, region);
+        return cap
+            ? { name: cap.name, artistName: cap.artistName, durationMs: cap.durationMs }
+            : null;
+    },
+    async search(term, region) {
+        const items = await searchCatalog(term, "songs", 25, region);
+        return items
+            .filter((i) => i.type === "song" || i.type === "songs")
+            .map((i) => ({
+                id: i.id,
+                name: i.name,
+                artistName: i.artistName,
+                albumName: i.albumName,
+                url: i.url,
+                durationMs: i.durationMs
+            }));
+    }
+};
+
+/** 解析「这次用哪个地区/哪个 URL」，失败也不抛给路由 —— 一律退化成「跟随链接」。 */
+async function planRegion(
+    url: string,
+    requested: unknown,
+    autoMatch: boolean
+): Promise<RegionPlan> {
+    try {
+        return await resolveRegionPlan(
+            url,
+            requested,
+            { autoMatch, defaultRegion: storefront() },
+            regionDeps
+        );
+    } catch (err) {
+        // resolveRegionPlan 已自行兜住探测异常；走到这里说明出了意料之外的问题，
+        // 那就当作用户没选地区（绝不因为一个附加功能让建任务失败）。
+        return {
+            originalUrl: url,
+            effectiveUrl: url,
+            requested: normalizeRegion(requested) ?? "",
+            effective: parseAppleMusicUrl(url).storefront ?? "",
+            changed: false,
+            fallback: true,
+            reason: "probe_failed",
+            note: `地区处理失败（${err instanceof Error ? err.message : String(err)}），已按原链接执行。`
+        };
+    }
+}
+
+/**
  * 单曲真实能力查询 —— 让界面里的编码选项来自 Apple 自己的 audioTraits，
  * 而不是三个硬编码选项。拿不到（播放列表/查询失败）时返回全部并附说明。
+ *
+ * 这里同时返回**地区计划**（requested/effective/fallback/note），
+ * 于是「选了日区但日区没有 → 会回退」这件事在**点下载之前**就能看到。
  */
 app.get("/api/codecs", requireAuth, async (req: Request, res: Response) => {
     const raw = String(req.query["url"] ?? "").trim();
     const link = parseAppleMusicUrl(raw);
+    const plan = await planRegion(raw, req.query["region"], req.query["autoMatch"] === "1");
 
     if (!link.id) {
-        res.json({ codecs: [...ALL_CODECS], note: link.note ?? "无法识别链接", resolved: link });
+        res.json({ codecs: [...ALL_CODECS], note: link.note ?? "无法识别链接", resolved: link, plan });
         return;
     }
+    // 自动匹配换的是**另一条记录**，能力/标题要按匹配到的那条查，否则界面会自相矛盾
+    const probeKind = plan.reason === "matched" && plan.match ? "song" : link.kind;
+    const probeId = plan.reason === "matched" && plan.match ? plan.match.id : link.id;
+
     try {
-        // 先用链接自带的地区查（/cn/ 的曲目查 /us/ 会 404），失败再试默认地区
-        let cap = await capabilityFor(link.kind, link.id, link.storefront);
-        if (!cap && link.storefront && link.storefront !== storefront()) {
-            cap = await capabilityFor(link.kind, link.id);
+        // 先按实际会取数的地区查（链接自带的地区 / 用户选的地区），失败再试配置里的地区
+        let cap = await capabilityFor(probeKind, probeId, plan.effective || link.storefront);
+        if (!cap && plan.effective && plan.effective !== storefront()) {
+            cap = await capabilityFor(probeKind, probeId, storefront());
         }
         if (!cap) {
             res.json({
                 codecs: [...ALL_CODECS],
                 note: link.note ?? `Apple 未返回该${link.kind}的能力信息`,
-                resolved: link
+                resolved: link,
+                plan
             });
             return;
         }
@@ -280,13 +347,15 @@ app.get("/api/codecs", requireAuth, async (req: Request, res: Response) => {
             title: cap.name,
             artist: cap.artistName,
             album: cap.albumName,
-            resolved: link
+            resolved: link,
+            plan
         });
     } catch (err) {
         res.json({
             codecs: [...ALL_CODECS],
             note: `查询能力失败：${err instanceof Error ? err.message : String(err)}`,
-            resolved: link
+            resolved: link,
+            plan
         });
     }
 });
@@ -320,8 +389,14 @@ app.post("/api/apple/2fa", requireAuth, (req: Request, res: Response) => {
 
 /**
  * 任务选项的**显式**覆盖 —— 只影响这一个任务，不落盘到任何配置文件（见 jobopts.ts）。
+ *
+ * 另外接受两个「地区」字段（不是引擎配置键，引擎按 URL 取地区，见 region.ts）：
+ *   region    —— 目标目录地区（两位小写字母；空 = 跟随链接）
+ *   autoMatch —— 目标区没有时，是否允许换用「艺人 + 时长一致」的另一条记录
+ * 服务端把 URL 改写好之后再入队，并且**把实际执行的 URL 存进任务**，
+ * 因此重试不会重新探测（目录会变，重试不该漂到别的地区）。
  */
-app.post("/api/jobs", requireAuth, (req: Request, res: Response) => {
+app.post("/api/jobs", requireAuth, async (req: Request, res: Response) => {
     const url = String(req.body?.url ?? "").trim();
     const codec = String(req.body?.codec ?? "alac").trim();
     if (!/^https?:\/\/(music|classical)\.apple\.com\//i.test(url)) {
@@ -332,20 +407,31 @@ app.post("/api/jobs", requireAuth, (req: Request, res: Response) => {
         res.status(400).json({ error: "codec must be alac, atmos or aac" });
         return;
     }
+    const rawRegion = req.body?.region;
+    const regionGiven = rawRegion === undefined || rawRegion === null ? "" : String(rawRegion).trim();
+    if (regionGiven !== "" && !normalizeRegion(regionGiven)) {
+        res.status(400).json({ error: "region must be a 2-letter code such as jp" });
+        return;
+    }
+
     const user = res.locals.user as { id: number };
     // 未给出的键一律不写进任务配置 → 引擎用 config.yaml 的值
     const options = explicitJobOptions(req.body?.options);
-    const job = store.addJob(user.id, url, codec, options);
+    const plan = await planRegion(url, regionGiven, req.body?.autoMatch === true);
+    const job = store.addJob(user.id, plan.effectiveUrl, codec, options, plan);
     enqueue(job);
     res.status(201).json({ job });
 });
 
 /**
- * 重试：把原任务（同一个链接 / 编码 / 临时覆盖）克隆成一个新任务。
+ * 重试：把原任务（同一个链接 / 编码 / 临时覆盖 / 元数据地区）克隆成一个新任务。
  *
  * 之所以「重试」够用而不需要「强制重下」：引擎遇到已存在的文件会先跳过
  * （`Track already exists locally.`），所以重跑一个专辑链接只会补上失败的那几首。
  * 而实测的失败原因是 Apple CDN 偶发掐断 HTTP/2 流，重跑一次通常就好了。
+ *
+ * 地区：直接复用原任务记录里的 `region`（其 effectiveUrl 就是当初实际执行的 URL），
+ * **不重新探测** —— 目标区目录会随时间变化，让重试漂到另一个地区/另一条记录是不对的。
  */
 app.post("/api/jobs/:id/retry", requireAuth, (req: Request, res: Response) => {
     const src = store.job(Number(req.params.id));
@@ -358,7 +444,7 @@ app.post("/api/jobs/:id/retry", requireAuth, (req: Request, res: Response) => {
         return;
     }
     const user = res.locals.user as { id: number };
-    const job = store.addJob(user.id, src.url, src.codec, src.options ?? {});
+    const job = store.addJob(user.id, src.url, src.codec, src.options ?? {}, src.region);
     enqueue(job);
     res.status(201).json({ job });
 });

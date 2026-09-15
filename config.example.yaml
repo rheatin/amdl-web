@@ -25,7 +25,11 @@ authorization-token: ""
 # 支持的语言码见：
 #   https://gist.github.com/itouakirai/c8ba9df9dc65bd300094103b058731d0
 storefront: "cn"          # 两位国家码：cn / us / jp / hk / tw …
+                          # 注意：本键只影响引擎自己的“搜索”命令；URL 任务按**链接里的地区**取数，
+                          #       网页的「元数据地区」就是改写链接里的地区段（见 README）。
 language: "zh-Hans-CN"    # 元数据语言，例：zh-Hans-CN / en-US / ja
+                          # 实测：语言会决定标题写法 —— 日区 + en-US 仍会得到英文/罗马音标题；
+                          #       想要日文原名，别设成 en-US（留空或 ja 都可以）
 
 # ── 音质 ────────────────────────────────────────────────────────────────────
 alac-max: 192000          # ALAC 最高采样率：192000 96000 48000 44100

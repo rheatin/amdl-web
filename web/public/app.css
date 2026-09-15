@@ -588,6 +588,13 @@ button.danger {
     background: var(--err-soft);
     color: #f7cfcd;
 }
+/* 地区回退提示：不是错误（任务照常建），但必须比「一切正常」更显眼 */
+.parse-result.warn {
+    border-style: solid;
+    border-color: rgba(228, 174, 84, 0.35);
+    background: var(--warn-soft, rgba(228, 174, 84, 0.12));
+    color: #f2dcb4;
+}
 .parse-result b {
     color: var(--fg);
 }

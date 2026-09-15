@@ -11,6 +11,51 @@
 
         <div id="parse-result" class="parse-result muted">粘贴链接后会自动解析，确认可用编码再下载。</div>
 
+        <div class="row" id="region-row">
+            <label>元数据地区
+                <select name="region" id="job-region">
+                    <option value="">跟随链接</option>
+                    <option value="jp">日本 jp</option>
+                    <option value="us">美国 us</option>
+                    <option value="gb">英国 gb</option>
+                    <option value="kr">韩国 kr</option>
+                    <option value="hk">香港 hk</option>
+                    <option value="tw">台湾 tw</option>
+                    <option value="sg">新加坡 sg</option>
+                    <option value="de">德国 de</option>
+                    <option value="fr">法国 fr</option>
+                    <option value="ca">加拿大 ca</option>
+                    <option value="au">澳大利亚 au</option>
+                </select>
+            </label>
+            <label class="chk" title="目标区没有这条记录时，是否允许换用同一首歌在目标区的另一条记录">
+                <input type="checkbox" id="job-automatch" name="autoMatch">
+                目标区没有时自动找等价记录<span class="warn">（有下错风险）</span>
+            </label>
+        </div>
+        <p id="region-note" class="parse-result muted small">
+            地区决定<strong>元数据取自哪个目录</strong>（也就是文件名与内嵌标签的写法：日区多为日文原名，大陆区常见英文/罗马音）。
+            音频本身是同一条记录。目标区没有这条记录时会<strong>自动回退</strong>到链接原本的地区，并在下面提示。
+        </p>
+
+        <details class="opts">
+            <summary>关于「自动找等价记录」的风险（建议先读）</summary>
+            <p class="muted small">
+                同一首歌在 Apple 目录里往往有<strong>多条记录</strong>（不同年代的再版、精选集、EP），
+                它们在目标区的标题才是当地人看到的写法。所以「目标区没有这条链接的记录」并不等于「目标区没有这首歌」。
+            </p>
+            <p class="muted small">
+                勾选后，我们会在目标区搜一次，并且<strong>只有艺人名与时长都一致</strong>（±1 秒）时才改用搜到的那条记录；
+                任何一项对不上就<strong>一律回退</strong>到原链接。<strong>不勾选则只回退，绝不替换。</strong>
+            </p>
+            <p class="warn small">
+                风险：同名不同版本很多（翻唱、现场版、TV size、instrumental、钢琴版…），实测在同一个搜索结果里就撞见过同名翻唱。
+                时长与艺人是目前最可靠的两个信号，但仍不能保证 100% 正确 ——
+                <strong>换用后请到任务页确认落盘的曲目名与时长</strong>，确认无误再删旧的罗马音版本。
+            </p>
+            <p class="muted small">注：自动匹配<strong>只对单曲链接生效</strong>；整张专辑/播放列表不做替换（换记录会改变任务规模）。</p>
+        </details>
+
         <div class="row" id="download-row" hidden>
             <select name="codec" id="job-codec">
                 <option value="alac">ALAC 无损</option>
@@ -75,6 +120,7 @@
                     <a href="/jobs?job=<%= j.id %>">#<%= j.id %></a>
                     <span class="badge <%= j.status %>"><%= j.status %></span>
                     <span class="muted"><%= j.codec %></span>
+                    <% if (j.region && j.region.fallback) { %><span class="warn small" title="<%= j.region.note %>">地区已回退</span><% } %>
                     <span class="ellipsis"><%= j.url %></span>
                 </li>
             <% }); %>
