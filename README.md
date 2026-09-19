@@ -143,6 +143,11 @@ docker compose logs -f wrapper-lite
 
 播放列表与艺人链接**不做预检**（拿不到「整条记录」的概念），按目标区直接跑，失败会在任务里报错。
 
+**搜索页也能选商店**（与概览页共用同一个选择器）：搜「Hanabira」时把商店切到日区，出来的就是
+「はなびら」那一条记录，点结果里的下载按钮会带着该商店一起建任务；页面顶部写明本次搜索范围，
+不指定时用 `config.yaml` 的 `storefront`。想要日文原名时，**先在搜索页找到那条记录**，
+比贴 CN 链接再指望自动匹配更可靠。
+
 勾选「目标区没有时自动找等价记录」后，会先在目标区搜一次：**只有艺人名与时长都一致（±1 秒）**
 才改用搜到的另一条记录（例如 EGOIST《Departures》在日区是 2020 再版，id 不同、标题才是日文原名）；
 任何一项对不上**一律回退，绝不替换**。搜索词从「艺人 + 完整曲名」逐步放宽到「艺人 + 曲名首词」「仅艺人」，
@@ -187,7 +192,7 @@ docker compose logs -f wrapper-lite
 | POST | `/api/setup` | 首次运行创建管理员 |
 | POST | `/api/login` · `/api/logout` | 会话 |
 | GET | `/api/codecs?url=&region=&autoMatch=1` | 解析链接并返回**真实可用编码** + 地区计划（会不会回退 / 有没有自动匹配） |
-| GET | `/api/search?q=` | Apple Music 目录搜索 |
+| GET | `/api/search?q=&region=` | Apple Music 目录搜索（`region` 指定商店，缺省用 `config.yaml` 的 `storefront`） |
 | GET | `/api/jobs` · POST `/api/jobs` | 任务列表 / 创建（`options` 里的键=本次临时覆盖；`region` / `autoMatch` = 元数据地区） |
 | POST | `/api/jobs/:id/retry` | 重试：克隆原任务（引擎会跳过已下载的曲目，只补失败的几首） |
 | GET | `/api/jobs/:id/events` | SSE：`hello` / `log` / `status` |

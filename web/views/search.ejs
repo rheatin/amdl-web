@@ -2,18 +2,35 @@
 
 <section class="card">
     <h1>搜索 Apple Music</h1>
-    <p class="muted">目录搜索使用公开的网页播放器开发者 token，<b>不需要 Apple 账号</b>。Storefront：<code><%= config.storefront %></code>。</p>
+    <p class="muted">目录搜索使用公开的网页播放器开发者 token，<b>不需要 Apple 账号</b>。</p>
     <form method="get" action="/search" class="row">
         <input name="q" value="<%= q %>" placeholder="歌名 / 专辑 / 艺人" autofocus required>
+        <label class="inline-field">商店
+            <%- include("partials/region-select", {
+                name: "region", id: "search-region", selected: region, inheritLabel: `默认（${defaultRegionName}）`
+            }) %>
+        </label>
         <button type="submit">搜索</button>
     </form>
+    <%
+    /* 只在「真的换了商店」时提示 —— 默认搜索不必解释 */
+    const usingOverride = region && region !== config.storefront;
+    %>
+    <p class="muted small">
+        搜索范围：<b><%= regionName %></b><%= usingOverride ? "（本次临时指定）" : `　— 换商店可以搜到该区的元数据写法（例如日文原名），点结果里的下载按钮会带着这个商店一起建任务。` %>
+    </p>
     <% if (error) { %><p class="err">搜索失败：<%= error %></p><% } %>
 </section>
 
 <% if (q && !error) { %>
 <section class="card">
     <h2>结果（<%= results.length %>）</h2>
-    <% if (results.length === 0) { %><p class="muted">没有结果。</p><% } %>
+    <% if (results.length === 0) { %>
+        <p class="muted">
+            这个商店里没有结果。
+            <% if (region) { %>换回<a href="/search?q=<%= encodeURIComponent(q) %>">默认商店</a>再试？<% } %>
+        </p>
+    <% } %>
     <ul class="results">
     <% results.forEach(function (r) { %>
         <li class="result">
@@ -29,9 +46,9 @@
             </div>
             <div class="actions">
                 <% if (r.url) { %>
-                    <button class="dl" data-url="<%= r.url %>" data-codec="alac">ALAC</button>
-                    <button class="dl ghost" data-url="<%= r.url %>" data-codec="atmos">Atmos</button>
-                    <button class="dl ghost" data-url="<%= r.url %>" data-codec="aac">AAC</button>
+                    <button class="dl" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="alac">ALAC</button>
+                    <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="atmos">Atmos</button>
+                    <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="aac">AAC</button>
                 <% } else { %>
                     <span class="muted">无可下载链接</span>
                 <% } %>

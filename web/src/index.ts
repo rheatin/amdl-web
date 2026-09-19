@@ -16,7 +16,7 @@ import {
 import { config, language, storefront } from "./config.js";
 import { explicitJobOptions } from "./jobopts.js";
 import { enqueue, queueDepth, reconcileOnBoot, subscribe } from "./queue.js";
-import { resolveRegionPlan, type RegionDeps, type RegionPlan } from "./region.js";
+import { resolveRegionPlan, regionLabel, type RegionDeps, type RegionPlan } from "./region.js";
 import { engineConfigPath } from "./ripper.js";
 import { lyricOptionsFromConfig, maskConfigText, SECRET_KEYS, tryLoadEngineConfig } from "./engineconf.js";
 import { store } from "./store.js";
@@ -94,18 +94,37 @@ app.get("/", requireAuth, (_req: Request, res: Response) => {
     });
 });
 
+/**
+ * 搜索页：**按商店搜索**（与概览页共用同一个地区选择器）。
+ *
+ * 为什么搜索也需要选商店：Apple 的目录分商店，同一首歌在不同商店的元数据写法不同
+ * （`Hanabira` / `はなびら`）。只搜默认商店，就永远搜不到日文原名那一条记录 ——
+ * 而这正是「想要日文名」时最该先做的事。搜索结果里的链接自带该商店的地区段，
+ * 所以点下载时服务端只会判定「与链接一致」，不会多一次改写或探测。
+ */
 app.get("/search", requireAuth, async (req: Request, res: Response) => {
     const q = String(req.query["q"] ?? "").trim();
+    const region = normalizeRegion(req.query["region"]) ?? "";
     let results: Awaited<ReturnType<typeof searchCatalog>> = [];
     let error: string | null = null;
     if (q) {
         try {
-            results = await searchCatalog(q);
+            results = await searchCatalog(q, "songs,albums,artists", 12, region || undefined);
         } catch (err) {
             error = err instanceof Error ? err.message : String(err);
         }
     }
-    res.render("search", { q, results, error, config });
+    res.render("search", {
+        q,
+        results,
+        error,
+        region,
+        // 两个都是**字符串**（视图直接显示，不要再当函数调）：
+        // regionName = 本次实际搜索的商店，defaultRegionName = 配置里的默认商店
+        regionName: regionLabel(region || storefront()),
+        defaultRegionName: regionLabel(storefront()),
+        config
+    });
 });
 
 app.get("/jobs", requireAuth, (_req: Request, res: Response) => {

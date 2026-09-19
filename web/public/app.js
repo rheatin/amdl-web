@@ -192,15 +192,20 @@ if (jobForm) {
     });
 }
 
-/* ---- 搜索页：一键下载 ---- */
+/* ---- 搜索页：一键下载（带着当前搜索的商店一起建任务）---- */
 document.querySelectorAll("button.dl").forEach((btn) => {
     btn.addEventListener("click", async () => {
         const url = btn.getAttribute("data-url");
         const codec = btn.getAttribute("data-codec") || "alac";
+        const region = (btn.getAttribute("data-region") || "").trim();
         btn.disabled = true;
         try {
-            const { job } = await postJson("/api/jobs", { url, codec });
-            toast(`已创建任务 #${job.id}（${codec}），正在跳转…`);
+            const body = { url, codec };
+            // 结果链接本来就带该商店的地区段，服务端会判定「与链接一致」——
+            // 带 region 只是把用户的意图一并记录下来（含自动匹配的判定依据）。
+            if (region) body.region = region;
+            const { job } = await postJson("/api/jobs", body);
+            toast(`已创建任务 #${job.id}（${codec}${region ? " · " + region : ""}），正在跳转…`);
             setTimeout(() => { window.location.href = `/jobs?job=${job.id}`; }, 700);
         } catch (err) {
             btn.disabled = false;

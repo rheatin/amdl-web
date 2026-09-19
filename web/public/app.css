@@ -268,6 +268,21 @@ main {
     flex: 1;
     min-width: 180px;
 }
+/* 行内小字段：`<label class="inline-field">文字 <select>…</select></label>`
+   （地区选择器在概览页与搜索页都用它 —— 标签与下拉框排在同一行，不再抢满一整行） */
+.inline-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--fg-muted);
+    font-size: 13px;
+    white-space: nowrap;
+}
+.row .inline-field select {
+    flex: 0 0 auto;
+    min-width: 168px;
+    width: auto;
+}
 .stack {
     display: flex;
     flex-direction: column;

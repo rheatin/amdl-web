@@ -155,6 +155,11 @@ Three outcomes, all shown **before you press Download**:
 Playlists and artist links are **not pre-checked** (there is no single "record" to check); they run against
 the target region directly and surface the engine error if that region has nothing.
 
+**The search page picks a storefront too** (same selector as the overview page): search "Hanabira" with the
+storefront set to Japan and you get the 「はなびら」 record itself; its download buttons carry that storefront
+into the job. The page states the search scope, falling back to `storefront` from `config.yaml` when unset —
+in practice, **finding the record on the search page** beats pasting a CN link and hoping auto-matching finds it.
+
 With **"auto-find an equivalent record"** enabled, the target region is searched first: an alternative
 record is used **only if the artist name matches and the duration is within ±1 s** (e.g. EGOIST's
 *Departures* exists in the JP store as a 2020 reissue with a different id and the native title). If either
@@ -204,7 +209,7 @@ See `config.example.yaml` in the repo root: a fully commented template covering 
 | POST | `/api/setup` | Create the first admin account |
 | POST | `/api/login` · `/api/logout` | Session |
 | GET | `/api/codecs?url=&region=&autoMatch=1` | Resolve a link and return its **real available codecs** plus the region plan (fallback / auto-match) |
-| GET | `/api/search?q=` | Apple Music catalog search |
+| GET | `/api/search?q=&region=` | Apple Music catalog search (`region` selects the storefront; defaults to `storefront` from `config.yaml`) |
 | GET | `/api/jobs` · POST `/api/jobs` | List / create jobs (keys inside `options` = per-job overrides; `region` / `autoMatch` = metadata region) |
 | POST | `/api/jobs/:id/retry` | Retry: clones the job (the engine skips tracks already on disk, so only failures are re-fetched) |
 | GET | `/api/jobs/:id/events` | SSE: `hello` / `log` / `status` |

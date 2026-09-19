@@ -12,21 +12,10 @@
         <div id="parse-result" class="parse-result muted">粘贴链接后会自动解析，确认可用编码再下载。</div>
 
         <div class="row" id="region-row">
-            <label>元数据地区
-                <select name="region" id="job-region">
-                    <option value="">跟随链接</option>
-                    <option value="jp">日本 jp</option>
-                    <option value="us">美国 us</option>
-                    <option value="gb">英国 gb</option>
-                    <option value="kr">韩国 kr</option>
-                    <option value="hk">香港 hk</option>
-                    <option value="tw">台湾 tw</option>
-                    <option value="sg">新加坡 sg</option>
-                    <option value="de">德国 de</option>
-                    <option value="fr">法国 fr</option>
-                    <option value="ca">加拿大 ca</option>
-                    <option value="au">澳大利亚 au</option>
-                </select>
+            <label class="inline-field">元数据地区
+                <%- include("partials/region-select", {
+                    name: "region", id: "job-region", selected: "", inheritLabel: "跟随链接"
+                }) %>
             </label>
             <label class="chk" title="目标区没有这条记录时，是否允许换用同一首歌在目标区的另一条记录">
                 <input type="checkbox" id="job-automatch" name="autoMatch">

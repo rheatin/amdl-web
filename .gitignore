@@ -13,3 +13,6 @@ engine/
 # 前端依赖与构建产物
 web/node_modules/
 web/dist/
+
+# npm 缓存（在受限环境里把缓存指到仓库内时会产生，别提交）
+.npm-cache/

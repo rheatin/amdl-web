@@ -1,0 +1,35 @@
+<%
+/*
+ * 地区（商店）选择器 —— 概览页与搜索页共用同一份选项，避免两处不一致。
+ *
+ * 参数：
+ *   name         select 的 name（默认 region）
+ *   id           select 的 id
+ *   selected     当前选中的地区码（"" = 不指定）
+ *   inheritLabel 第一项的文案：概览页是「跟随链接」（有链接可跟随），
+ *                搜索页是「默认（<配置的商店>）」（还没有链接可跟随）
+ *
+ * 为什么需要它：Apple 的目录是分商店的，同一首歌在不同商店的元数据写法不同
+ * （大陆区 Hanabira / 日区 はなびら）。搜索也必须按商店查，否则搜不到日文原名那一条。
+ */
+const items = [
+    ["", typeof inheritLabel === "string" ? inheritLabel : "默认"],
+    ["jp", "日本 jp"],
+    ["us", "美国 us"],
+    ["gb", "英国 gb"],
+    ["kr", "韩国 kr"],
+    ["hk", "香港 hk"],
+    ["tw", "台湾 tw"],
+    ["sg", "新加坡 sg"],
+    ["de", "德国 de"],
+    ["fr", "法国 fr"],
+    ["ca", "加拿大 ca"],
+    ["au", "澳大利亚 au"]
+];
+const cur = typeof selected === "string" ? selected.toLowerCase() : "";
+%>
+<select name="<%= name || "region" %>"<% if (id) { %> id="<%= id %>"<% } %>>
+<% items.forEach(function (it) { %>
+    <option value="<%= it[0] %>"<%= cur === it[0] ? " selected" : "" %>><%= it[1] %></option>
+<% }); %>
+</select>
