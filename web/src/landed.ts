@@ -13,23 +13,34 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { configStrings } from "./engineconf.js";
+import { KEYS, pickString, tryLoadEngineConfig } from "./engineconf.js";
 import type { Track } from "./store.js";
 
-const SAVE_KEYS = ["alac-save-folder", "atmos-save-folder", "aac-save-folder", "mv-save-folder"];
 const AUDIO = /\.(m4a|mp4|m4v|mov|mp3|flac|wav|aac)$/i;
 const MAX_DEPTH = 6;
 const MAX_FILES = 5000;
 
-/** 引擎配置里的落盘根目录（容器内路径；前端与引擎同容器，所以直接可读）。 */
+/**
+ * 引擎配置里的落盘根目录（容器内路径；前端与引擎同容器，所以直接可读）。
+ *
+ * 走 `KEYS.saveFolders` 的候选路径 —— 上游把配置从扁平改成了 `paths.*` 嵌套结构，
+ * 写死任何一种都会让这里扫不到目录，**音乐库整页变空**。
+ * 候选表在 engineconf.ts 里统一维护（`paths.alac` → 旧 `alac-save-folder`）。
+ */
 export function saveDirs(): string[] {
-    const v = configStrings(SAVE_KEYS);
+    const v = tryLoadEngineConfig()?.values ?? {};
     const out: string[] = [];
-    for (const key of SAVE_KEYS) {
-        const dir = (v[key] ?? "").trim();
+    for (const key of KEYS.saveFolders) {
+        const dir = (pickString(v, [key, legacySaveKey(key)]) ?? "").trim();
         if (dir && !out.includes(dir)) out.push(dir);
     }
     return out;
+}
+
+/** `paths.alac` → 旧扁平键 `alac-save-folder`。 */
+function legacySaveKey(key: string): string {
+    const leaf = key.split(".").pop() ?? key;
+    return `${leaf}-save-folder`;
 }
 
 /**

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { tryLoadEngineConfig } from "./engineconf.js";
+import { KEYS, pickString, tryLoadEngineConfig } from "./engineconf.js";
 
 function env(name: string, def: string): string {
     const v = process.env[name];
@@ -114,7 +114,7 @@ let languageCache: string | null = null;
 
 export function storefront(): string {
     if (storefrontCache) return storefrontCache;
-    const fromYaml = readEngineScalar("storefront");
+    const fromYaml = pickString(readEngineValues(), KEYS.storefront);
     const v = (fromYaml ?? env("STOREFRONT", "us")).trim().toLowerCase();
     storefrontCache = /^[a-z]{2}$/.test(v) ? v : "us";
     return storefrontCache;
@@ -122,20 +122,20 @@ export function storefront(): string {
 
 export function language(): string {
     if (languageCache) return languageCache;
-    const v = (readEngineScalar("language") ?? env("LANGUAGE", "en-US")).trim();
+    const v = (pickString(readEngineValues(), KEYS.language) ?? env("LANGUAGE", "en-US")).trim();
     languageCache = v === "" ? "en-US" : v;
     return languageCache;
 }
 
 /**
- * 读引擎 config.yaml 里的一个标量键（engineconf 不依赖本模块，因此可以静态导入）。
+ * 读引擎 config.yaml 的全部标量（engineconf 不依赖本模块，因此可以静态导入）。
+ * 用候选路径读取，这样上游把键从顶层挪进 `general:` 也不会让这里失效。
  */
-function readEngineScalar(key: string): string | undefined {
+function readEngineValues(): Record<string, string> {
     try {
-        const v = tryLoadEngineConfig(config.engineDir)?.values[key];
-        return v === undefined || v.trim() === "" ? undefined : v.trim();
+        return tryLoadEngineConfig(config.engineDir)?.values ?? {};
     } catch {
-        return undefined;
+        return {};
     }
 }
 

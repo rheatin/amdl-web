@@ -26,7 +26,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
-import { applyOverrides, loadEngineConfig, type OverrideValue } from "./engineconf.js";
+import { applyOverrides, KEYS, loadEngineConfig, type OverrideValue } from "./engineconf.js";
 import { store, type Job, type JobOptions, type Track } from "./store.js";
 
 /** 引擎收尾那行的统计：======= [✔ ] Completed: 6/7 | [⚠ ] Warnings: 0 | [✖ ] Errors: 1 ======= */
@@ -69,19 +69,28 @@ export function jobConfigDir(jobId: number): string {
 }
 
 /** 本服务必须掌握的键（无论用户的 config.yaml 怎么写）。 */
+/**
+ * 本服务必须掌握的键（无论用户的 config.yaml 怎么写）。
+ *
+ * 用 `KEYS` 里的**候选路径**：上游把配置改成 `general.*` 嵌套结构后，
+ * 这些键从 `lite-server` 变成了 `general.lite-server`。这里只写新路径，
+ * 因为 applyOverrides 在父块不存在时会自动补出 `general:` 块；
+ * 而旧配置（扁平键）里 `general.lite-server` 找不到时会新追加一行 ——
+ * 引擎读新路径能拿到值，旧行留着也无害（引擎不认它）。
+ */
 const FORCED: Array<[string, OverrideValue]> = [
-    ["lite-server", config.liteServer],
-    ["exit-on-error", true] // 裸 bool：引擎的字段是 bool，写成字符串会解析失败
+    [KEYS.liteServer[0], config.liteServer],
+    [KEYS.exitOnError[0], true] // 裸 bool：引擎的字段是 bool，写成字符串会解析失败
 ];
 
-/** 任务选项 → 引擎键。只包含**本次任务显式给出**的键。 */
+/** 任务选项 → 引擎键（点分路径，见 engineconf.KEYS）。只包含**本次任务显式给出**的键。 */
 function jobOverrides(opts: Partial<JobOptions>): Array<[string, OverrideValue]> {
     const out: Array<[string, OverrideValue]> = [];
-    if (opts.embedLrc !== undefined) out.push(["embed-lrc", opts.embedLrc]);
-    if (opts.saveLrcFile !== undefined) out.push(["save-lrc-file", opts.saveLrcFile]);
-    if (opts.lrcType !== undefined) out.push(["lrc-type", opts.lrcType]);
-    if (opts.lrcExtra !== undefined) out.push(["lrc-extra", opts.lrcExtra]);
-    if (opts.lrcFormat !== undefined) out.push(["lrc-format", opts.lrcFormat]);
+    if (opts.embedLrc !== undefined) out.push([KEYS.lyricsEmbed[0], opts.embedLrc]);
+    if (opts.saveLrcFile !== undefined) out.push([KEYS.lyricsSaveFile[0], opts.saveLrcFile]);
+    if (opts.lrcType !== undefined) out.push([KEYS.lyricsType[0], opts.lrcType]);
+    if (opts.lrcExtra !== undefined) out.push([KEYS.lyricsExtra[0], opts.lrcExtra]);
+    if (opts.lrcFormat !== undefined) out.push([KEYS.lyricsFormat[0], opts.lrcFormat]);
     return out;
 }
 
