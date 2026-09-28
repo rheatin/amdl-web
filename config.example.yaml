@@ -1,114 +1,95 @@
-# =============================================================================
-# 引擎配置 —— 本文件是「下载相关」参数的唯一出处
-#
-# 三个地方各管一摊（详见 README 的「配置分层」）：
-#   * .env        → 部署相关：端口 / 路径 / 权限 / 时区 / 代理 / 并发 / 站点口令
-#   * 本文件       → 下载相关：音质 / 歌词 / 命名 / 转码 / 地区 / Apple 凭据
-#   * 网页 UI      → 只有「本次任务临时覆盖」的几项，用完即弃、不落盘
-#
-# 使用方法：
-#   cp config.example.yaml config.yaml   # 然后填上自己的 token
-#   docker compose up -d                 # 改完必须重启容器（单文件 bind mount 认 inode）
-# 网页「配置」页会只读地展示本文件（凭据自动打码），随时可以看到实际生效的值。
-# =============================================================================
+# ------------------------------------------------------------------------------
+# 1. General Settings (Account, Network & System)
+# ------------------------------------------------------------------------------
+general:
+  lite-server: "http://127.0.0.1:12340"   # wrapper-lite HTTP API endpoint (/m3u8, /key, /lyrics, etc.)
+  media-user-token: ""                    # Media user token for Station downloads
+  # Supported storefront languages: https://gist.github.com/itouakirai/c8ba9df9dc65bd300094103b058731d0
+  language: ""                            # Storefront language code (e.g. "en-US", "ja", "zh-Hans-CN")
+  max-memory-limit: 256                   # Maximum memory buffer limit in MB for stream processing
+  proxy: ""                               # HTTP/SOCKS5 proxy (e.g. "http://127.0.0.1:7890", "socks5://127.0.0.1:1080")
+  storefront: "us"                        # Storefront country code; used only for search or missing URL storefront
+  authorization-token: ""                 # Bearer token for Apple Music API (leave blank to auto-fetch)
+  exit-on-error: false                    # Set true to exit on download errors instead of prompting interactively
 
-# ── Apple 凭据（只写在这里；网页不保存、不代持你的账号口令）───────────────────
-# media-user-token：来自 music.apple.com 的 cookie，用于歌词/电台等需要账号的内容。
-#   取法：浏览器登录 music.apple.com → 开发者工具 → Application → Cookies →
-#   复制 media-user-token 的值。留空则只能下载公开内容。
-media-user-token: ""
-# authorization-token：amp-api 的 Bearer token。留空时引擎会自行抓取 dev token
-#   （失败通常是容器出网/CA 问题，先看容器日志）。抓取到的 token 也会被 wrapper 缓存。
-authorization-token: ""
+# ------------------------------------------------------------------------------
+# 2. Media Quality & Stream Settings (Audio & Video)
+# ------------------------------------------------------------------------------
+media:
+  get-m3u8-mode: "hires"                  # M3U8 retrieval mode: "hires" (detect high-res) or "all" (all streams)
+  alac-max: 192000                        # Maximum sample rate limit for ALAC (192000 | 96000 | 48000 | 44100)
+  atmos-max: 2768                         # Maximum bitrate limit for Dolby Atmos (2768 | 2448)
+  aac-type: "aac-lc"                      # AAC stream profile: "aac-lc", "aac", "aac-binaural", or "aac-downmix"
+  alac-fix: true                          # Automatically patch malformed ALAC packets
 
-# ── 地区与语言（决定搜索、编码探测与元数据语言，必须与账号所在区一致）──────────
-# 支持的语言码见：
-#   https://gist.github.com/itouakirai/c8ba9df9dc65bd300094103b058731d0
-storefront: "cn"          # 两位国家码：cn / us / jp / hk / tw …
-                          # 注意：本键只影响引擎自己的“搜索”命令；URL 任务按**链接里的地区**取数，
-                          #       网页的「元数据地区」就是改写链接里的地区段（见 README）。
-language: "zh-Hans-CN"    # 元数据语言，例：zh-Hans-CN / en-US / ja
-                          # 实测：语言会决定标题写法 —— 日区 + en-US 仍会得到英文/罗马音标题；
-                          #       想要日文原名，别设成 en-US（留空或 ja 都可以）
+  # Music Video settings
+  mv:
+    audio-type: "atmos"                   # Audio codec selection for MV: "atmos", "ac3", or "aac"
+    max: 2160                             # Maximum video resolution for MV (e.g. 2160, 1080, 720)
 
-# ── 音质 ────────────────────────────────────────────────────────────────────
-alac-max: 192000          # ALAC 最高采样率：192000 96000 48000 44100
-atmos-max: 2768           # Atmos 最高码率：2768 2448
-aac-type: aac-lc          # aac-lc aac aac-binaural aac-downmix
-get-m3u8-mode: hires      # hires=只探测高解析清单；all=全部
-limit-max: 200            # 一次任务最多处理多少首（防止误贴大播放列表）
-alac-fix: true            # 修复损坏的 ALAC 包（建议保持 true）
-max-memory-limit: 256     # MB，引擎内存上限
+# ------------------------------------------------------------------------------
+# 3. Storage Paths & Templates (Save Folders & Naming Templates)
+# ------------------------------------------------------------------------------
+paths:
+  alac: "AM-Lossless"                     # Save folder for ALAC (Lossless / Hi-Res) downloads
+  atmos: "AM-Atmos"                       # Save folder for Dolby Atmos (Spatial Audio) downloads
+  aac: "AM-AAC"                           # Save folder for AAC downloads
+  mv: "AM-MV"                             # Save folder for Music Videos
 
-# ── 歌词 ────────────────────────────────────────────────────────────────────
-embed-lrc: true           # 把歌词写进音频文件标签
-save-lrc-file: true       # 另外存一份 .lrc 文件（默认开，媒体库可直接读）
-lrc-type: "lyrics"        # lyrics=逐行；syllable-lyrics=逐字（带时间轴）
-lrc-extra: ""             # ""=不附加；translation=翻译；pronunciation=罗马音
-lrc-format: "lrc"         # lrc 或 ttml
+  # Variables: {AlbumId}, {AlbumName}, {ArtistName}, {ReleaseDate}, {ReleaseYear}, {UPC}, {Copyright}, {Quality}, {Codec}, {Tag}, {RecordLabel}
+  album-folder: "{AlbumName}"
 
-# ── 封面与美术 ──────────────────────────────────────────────────────────────
-embed-cover: true
-cover-size: 5000x5000
-cover-format: jpg         # jpg png or original
-save-artist-cover: false  # 同时保存艺人头像
-save-animated-artwork: false   # 动态封面（需要 ffmpeg，镜像里已内置）
-emby-animated-artwork: false   # 动态封面存成 emby 认的命名（需要 ffmpeg）
+  # Variables: {PlaylistId}, {PlaylistName}, {ArtistName}, {Quality}, {Codec}, {Tag}
+  playlist-folder: "{PlaylistName}"
 
-# ── 落盘目录与命名模板 ───────────────────────────────────────────────────────
-# 容器内路径：/downloads 就是宿主机的 MUSIC_DIR。
-alac-save-folder: "/downloads/ALAC"
-atmos-save-folder: "/downloads/Atmos"
-aac-save-folder: "/downloads/AAC"
-mv-save-folder: "/downloads/MV"
+  # Variables: {ArtistId}, {ArtistName}, {UrlArtistName}. Set to "" to disable artist sub-folder.
+  artist-folder: "{UrlArtistName}"
 
-# 专辑目录：{AlbumId} {AlbumName} {ArtistName} {ReleaseDate} {ReleaseYear}
-#           {UPC} {Copyright} {Quality} {Codec} {Tag} {RecordLabel}
-album-folder-format: "{AlbumName}"
-# 播放列表目录：{PlaylistId} {PlaylistName} {ArtistName} {Quality} {Codec} {Tag}
-playlist-folder-format: "{PlaylistName}"
-# 曲目文件名：{SongId} {SongNumer} {ArtistName} {SongName} {DiscNumber}
-#             {TrackNumber} {Quality} {Codec} {Tag}
-song-file-format: "{SongNumer}. {SongName}"
-# 艺人目录：{ArtistId} {ArtistName} {UrlArtistName}；设为 "" 则不建艺人目录
-artist-folder-format: "{UrlArtistName}"
+  # Variables: {SongId}, {SongNumer}, {ArtistName}, {SongName}, {DiscNumber}, {TrackNumber}, {Quality}, {Codec}, {Tag}
+  song-file: "{SongNumer}. {SongName}"
 
-# 标签里的后缀（设为 "" 则不加）
-explicit-choice: "[E]"      # 露骨内容
-clean-choice: "[C]"         # 清洁版
-apple-master-choice: "[M]"  # Apple Digital Master
+  limit-max: 200                        # Maximum character limit for folder and file names
+  explicit: "[E]"                       # Tag suffix for explicit tracks (set to "" to disable)
+  clean: "[C]"                          # Tag suffix for clean tracks (set to "" to disable)
+  apple-master: "[M]"                   # Tag suffix for Apple Digital Master tracks (set to "" to disable)
 
-tag-sort-order: true       # 写入排序用标签（sort 系列）
-tag-itunes-id: true        # 写入 iTunes/Apple 的 id 标签
-use-songinfo-for-playlist: false   # 播放列表：元数据用歌曲自身信息（而非专辑）
-dl-albumcover-for-playlist: false  # 播放列表：额外下载专辑封面
+# ------------------------------------------------------------------------------
+# 4. Metadata Settings (Lyrics, Artwork & Tags)
+# ------------------------------------------------------------------------------
+metadata:
+  lyrics:
+    save-file: false                      # Save .lrc file to disk
+    embed: true                           # Embed lyrics directly into audio container tags
+    type: "lyrics"                        # Lyrics type: "lyrics" (standard line-by-line) or "syllable-lyrics" (word-by-word)
+    format: "lrc"                         # Lyrics file format: "lrc" or "ttml"
+    extra: ""                             # Additional lyric options: "translation" or "pronunciation" (when available)
 
-# ── 音乐视频（MV）──────────────────────────────────────────────────────────
-mv-audio-type: atmos      # atmos ac3 aac
-mv-max: 2160              # 最高分辨率
+  artwork:
+    embed: true                           # Embed cover artwork into downloaded audio files
+    size: "5000x5000"                     # Cover image resolution: "5000x5000", "3000x3000", "1400x1400", etc.
+    format: "jpg"                         # Image format: "jpg", "png", or "original"
+    save-artist: false                    # Save artist banner/avatar cover image to artist folder
+    save-animated: false                  # Save motion/animated artwork as video (requires ffmpeg)
+    emby-animated: false                  # Save animated artwork formatted for Emby/Jellyfin (requires ffmpeg)
+    dl-for-playlist: false                # Download separate album cover image for playlists
 
-# ── 下载后转码（需要 ffmpeg，镜像里已内置）──────────────────────────────────
-convert-after-download: false
-convert-format: "flac"            # flac | mp3 | opus | wav | copy（仅换容器）
-convert-keep-original: false      # 保留原文件
-convert-skip-if-source-matches: true   # 已经是目标格式就跳过
-convert-with-metadata: true       # 转换后保留元数据
-convert-extra-args: ""            # 追加原始参数（高级用法）
-ffmpeg-path: "ffmpeg"             # 不在 PATH 时改写这里
-# 有损转无损的告警与处理
-convert-warn-lossy-to-lossy: true
-convert-warn-lossy-to-lossless: true
-convert-skip-lossy-to-lossless: true   # 有损源转 flac/wav 时直接跳过
-convert-check-bad-alac: false          # 检查 ALAC 是否损坏
-convert-delete-bad-alac: false         # 损坏则删除
+  tags:
+    sort-order: true                      # Write iTunes sort order tags (artist, album artist, album name)
+    itunes-id: true                       # Write iTunes catalog IDs into metadata
+    use-songinfo-for-playlist: false      # For playlists, use original song info for album name, track and disc number
 
-# ── 网络 ────────────────────────────────────────────────────────────────────
-# 引擎访问 amp-api 用的代理（元数据请求）。容器级出网代理在 .env 的 HTTP(S)_PROXY。
-#   proxy: "socks5://127.0.0.1:1080"
-#   proxy: "http://127.0.0.1:3128"
-# 留空 = 直连。云端 IP 被 Apple 拦（503 / Failed to get song response）时才需要。
-proxy: ""
-
-# ── 由本服务在每次任务时强制覆盖的两个键（写在下面只为说明）────────────────────
-# lite-server: "http://wrapper-lite:12340"   # 解密后端地址，取自 .env 的 LITE_SERVER
-# exit-on-error: true                        # 必须 true，否则引擎出错会阻塞等 stdin
+# ------------------------------------------------------------------------------
+# 5. Conversion Settings (Post-download Audio Transcoding via FFmpeg)
+# ------------------------------------------------------------------------------
+convert:
+  after-download: false                   # Enable post-download conversion (requires ffmpeg)
+  format: "flac"                          # Target format: "flac", "mp3", "opus", "wav", or "copy"
+  keep-original: false                    # Keep original m4a file after successful conversion
+  skip-if-source-matches: true            # Skip conversion if downloaded source matches target format
+  ffmpeg-path: "ffmpeg"                   # Path to ffmpeg executable (override if not in system PATH)
+  extra-args: ""                          # Additional raw command-line arguments passed directly to ffmpeg
+  with-metadata: true                     # Preserve original metadata and tags in converted files
+  warn-lossy-to-lossless: true            # Print a warning when converting a detected lossy source to lossless
+  skip-lossy-to-lossless: true            # Skip converting detected lossy sources to lossless formats (e.g. flac/wav)
+  check-bad-alac: false                   # Check and report if downloaded ALAC audio stream is damaged
+  delete-bad-alac: false                  # Automatically delete damaged ALAC files

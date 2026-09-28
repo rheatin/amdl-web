@@ -206,13 +206,51 @@ docker compose logs -f wrapper-lite
 - **`Dockerfile.amdl`**：wrapper-lite 的 CMake 用 `FetchContent`（内部 `git clone`）拉取
   cJSON / Dobby。为在 git 受限环境下可构建，依赖被 vendor 到 `wrapper-lite/deps/` 并通过
   `-DFETCHCONTENT_SOURCE_DIR_*` 注入；同时把 `-j$(nproc)` 收敛为 `-j${BUILD_JOBS}`。
-- **`Dockerfile.web`** 内置三道**构建期自检**，把「只有点下载时才暴露」的错误提前到构建阶段：
-  引擎二进制能否 `execve`（musl/glibc 不匹配）、Temari 自带 cdylib 是否可解析、
+- **`Dockerfile.web`** 内置**构建期自检**，把「只有点下载时才暴露」的错误提前到构建阶段：
+  引擎二进制能否 `execve`（musl/glibc 不匹配）、引擎能否正常启动、
   系统 CA 证书是否存在（Go 用系统 CA，而 `node:*-slim` 不带）。
+
+  > 历史：旧版引擎的 FairPlay 解密依赖 Temari 的 **CGO cdylib**（`libtemari.so`），
+  > 靠 `runtime.Caller(0)` 定位「与自己同目录」的它，而那是**编译期**的 module 缓存路径，
+  > 所以当时必须把模块目录名与 cdylib 一起带进运行时镜像再还原。
+  > **上游已换成纯 Go 移植**（`internal/temari/rounds_gen.go`），这段搬运已删除。
 - 引擎配置**按任务覆盖**：引擎从进程 cwd 读 `config.yaml`，故每个任务生成私有配置目录。
 
 详细原因与更多坑（含 bind mount 的 inode 陷阱、entrypoint 的 `chown` 影响等）见
 [`docs/DESIGN.md`](docs/DESIGN.md)。
+
+### 引擎配置：与上游键名解耦
+
+`config.yaml` 用的是**上游的嵌套结构**（`general` / `media` / `paths` / `metadata` / `convert`）。
+上游在 2025 年把配置从扁平结构改成了嵌套结构，例如：
+
+| 旧（扁平） | 新（嵌套） |
+|---|---|
+| `lite-server` | `general.lite-server` |
+| `alac-save-folder` | `paths.alac` |
+| `embed-lrc` | `metadata.lyrics.embed` |
+| `mv-max` | `media.mv.max` |
+
+**本服务的代码里不写死任何一种键名**：`web/src/engineconf.ts` 把每个标量解析成**点分路径**，
+读取一律走候选路径表（`KEYS` + `pickString` / `pickBool`），新路径在前、旧路径在后。
+
+于是上游再改键名时，**只需往 `KEYS` 里加一项候选路径**，调用点（落盘扫描、歌词预填、
+地区读取、任务级覆盖）都不用动。反之，写死旧键名会让 UI **静默失效**：
+落盘目录读不到 → 音乐库整页变空，歌词控件预填值全错。
+
+### 音乐视频（MV）
+
+MV 的取数与音频走**不同的 DRM 通道**，两者都要满足：
+
+* **引擎侧**：上游按 master playlist 的 `ALLOWED-CPC` 判定该档位用哪套 DRM。
+  实测 1440p / 2160p 档为 `com.microsoft.playready:SL3000`（FairPlay 只到 Baseline/AppleBaseline），
+  所以 `mv-max: 2160` **必须**配一个会走 PlayReady 的引擎 —— 否则会报
+  `license acquisition failed`（`errorCode -42585`）。
+* **wrapper 侧**：`POST /license` 需要支持 `drm-type`（`wv`=Widevine 默认，`pr`=PlayReady），
+  它决定请求里的 `key-system`（`com.microsoft.playready` / `com.widevine.alpha`）。
+  旧版 wrapper-lite 没有这个参数，两种 DRM 都会失败。
+
+两者是**配套**的：只升一边仍然下不动 MV。
 
 ### 上游源码获取（git 不可用时）
 
@@ -226,9 +264,14 @@ curl -sL https://codeload.github.com/DaveGamble/cJSON/tar.gz/refs/tags/v1.7.19 \
   | tar xz -C wrapper-lite/deps/cjson --strip-components=1
 curl -sL https://codeload.github.com/BepInEx/Dobby/tar.gz/refs/heads/master \
   | tar xz -C wrapper-lite/deps/dobby --strip-components=1
-curl -sL https://github.com/zhaarey/apple-music-downloader/archive/refs/heads/main.tar.gz \
+curl -sL https://codeload.github.com/zhaarey/apple-music-downloader/tar.gz/refs/heads/main \
   | tar xz --strip-components=1 -C engine
 ```
+
+> wrapper 的 tarball 有约 49MB（内含预编译的 Android rootfs，解包后 116MB+）。
+> 在 `/tmp` 是小分区的机器上要解到大盘，否则会 `No space left on device`。
+> 若只想升级 `lite/` 源码而不想重下 rootfs，可以只解包需要的文件：
+> `tar xzf wrapper.tar.gz -C wrapper --strip-components=1 '*/lite/*' '*/CMakeLists.txt'`。
 
 ## ⚠️ 已知限制
 
