@@ -50,7 +50,12 @@
                     <% if (r.trackCount) { %> · <%= r.trackCount %> 首<% } %>
                 </div>
                 <%# 音质明细：位深 / 采样率 / Hi-Res / Atmos 取自该曲目的 master playlist（见 src/format.ts） %>
-                <% if (r.formats && r.formats.length) { %>
+                <% if (r.type === "music-video") { %>
+                    <div class="result-quality">
+                        <span class="q-chip atmos">MV · 视频 + 音轨</span>
+                        <span class="muted small">音轨类型与分辨率按 config.yaml 的 mv-audio-type / mv-max</span>
+                    </div>
+                <% } else if (r.formats && r.formats.length) { %>
                     <div class="result-quality">
                         <% r.formats.slice(0, 4).forEach(function (f) { %>
                             <span class="q-chip <%= f.hiRes ? 'hires' : (f.atmos ? 'atmos' : (f.lossless ? 'ok' : '')) %>"
@@ -64,6 +69,11 @@
             </div>
             <div class="actions">
                 <% if (r.url) { %>
+                <% if (r.type === "music-video") { %>
+                    <%# MV 只有一个动作：引擎按链接分派，没有编码可选 %>
+                    <button class="dl" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="mv"
+                            title="音乐视频（MV）">下载 MV</button>
+                <% } else { %>
                     <%
                     /* 按编码挑一条最有代表性的音质写进按钮副标题 —— 免得"点 ALAC 才发现是 16/44.1" */
                     const byCodec = {};
@@ -78,6 +88,7 @@
                             title="<%= byCodec.atmos ? byCodec.atmos.label : 'Dolby Atmos' %>">Atmos<% if (byCodec.atmos) { %><span class="btn-sub"><%= byCodec.atmos.detail %></span><% } %></button>
                     <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="aac"
                             title="<%= byCodec.aac ? byCodec.aac.label : 'AAC 有损' %>">AAC<% if (byCodec.aac) { %><span class="btn-sub"><%= byCodec.aac.detail %></span><% } %></button>
+                <% } %>
                 <% } else { %>
                     <span class="muted">无可下载链接</span>
                 <% } %>

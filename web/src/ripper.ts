@@ -44,6 +44,18 @@ export type RipResult = {
     summary?: EngineSummary;
 };
 
+/**
+ * 引擎参数。
+ *
+ * `codec` 的四种取值：
+ *   * `alac`  —— 默认（不带标志）
+ *   * `atmos` —— `--atmos`
+ *   * `aac`   —— `--aac`
+ *   * `mv`    —— 音乐视频。**不需要任何标志**：引擎按 URL 里的 `/music-video/`
+ *                （run.go 的 `strings.Contains(urlRaw, "/music-video/")`，以及
+ *                rip.go 里 `track.Type == "music-videos"` 的分支）自行分派到 mvDownloader。
+ *                也就是说 MV 完全由链接决定，编码选项对它没有意义。
+ */
 export function engineArgs(url: string, codec: string): string[] {
     const args = [url, "--json", "--lite-server", config.liteServer];
     if (codec === "atmos") args.push("--atmos");

@@ -106,6 +106,15 @@ async function catalogGet(pathname: string, params: Record<string, string>): Pro
 
 /* ------------------------------------------------------------------ search */
 
+/**
+ * 搜索页请求的目录类型。
+ *
+ * `music-videos` 必须显式写上：目录把音乐视频当**独立类型**（结果落在
+ * `results["music-videos"]`），不带它 MV 就永远搜不出来 —— 而 MV 下载正是
+ * 这个站点要支持的一类内容（引擎按 URL 里的 `/music-video/` 自行分派）。
+ */
+export const SEARCH_TYPES = "songs,albums,artists,music-videos";
+
 export type SearchItem = {
     id: string;
     type: "song" | "album" | "artist" | string;
@@ -180,7 +189,9 @@ export async function searchCatalog(
             });
         }
     }
-    const order: Record<string, number> = { song: 0, album: 1, artist: 2 };
+    // 排序：歌 → 专辑 → 艺人 → 音乐视频（MV 是**视频**，放在音频结果之后，
+    // 免得用户搜歌名时被一堆 Lyric Video 顶下去）。
+    const order: Record<string, number> = { song: 0, album: 1, artist: 2, "music-video": 3 };
     out.sort((x, y) => (order[x.type] ?? 9) - (order[y.type] ?? 9));
     return out;
 }
@@ -448,17 +459,22 @@ export async function songFormats(adamId: string): Promise<AudioFormat[]> {
 }
 
 /**
- * 音质明细的**首选**取数路径：直接用目录给的 `extendedAssetUrls.enhancedHls`。
+ * 音质明细的取数路径 —— 为什么**以 wrapper-lite 为准**。
  *
- * 为什么它比 wrapper 好（实测数据）：
- *   * wrapper 的 `/m3u8` 每次约 **780 ms**，与并发无关（那是它去 Apple 取清单的固定成本）；
- *     而直接抓 enhancedHls 只要约 **100 ms**。搜索页要在十几条结果上做这件事，
- *     差的就是 19 秒与 6 秒。
- *   * 它不需要 wrapper 在线，也就不占用与 FairPlay 解密共享的那个进程。
+ * 这里踩过一个真实的坑，记下来免得再犯：
+ *   目录 `extendedAssetUrls.enhancedHls` 给的清单**可能比实际能下的低一档**。
+ *   实测 Ado《好きでいて》(adamId 6806106478)：
+ *     * wrapper `/m3u8` → `…/P1488201312_default.m3u8`，ALAC 有 **96000-24 与 48000-24 两档**；
+ *     * 目录 enhancedHls → `…/P1488201222_default.m3u8`，ALAC **只有 48000-24**。
+ *   两者是**不同的清单文件**。引擎下载用的是 wrapper 那个，所以界面若显示目录那个，
+ *   就会出现「Apple Music 明明是 Hi-Res，预览却只有 48 kHz」——用户实际就是这么发现的。
  *
- * 目录哪里会给 enhancedHls（实测）：**search 结果**、**albums/playlists 的 tracks 关系**。
- * 不给的地方：`/songs/{id}` 单曲端点 —— 所以单曲链接的解析预览只能退到 wrapper，
- * 这是本文件里唯一"必须依赖 wrapper"的音质路径。
+ *   曾经在另一首歌（S.H.E《安静了》）上抽查过两条路径一致，就外推成"目录清单够用"，
+ *   那个假设是错的：目录给的是降级子集。所以**先用 wrapper**，
+ *   目录 enhancedHls 只当 wrapper 不可用时的兜底（聊胜于无，但要清楚它可能偏低）。
+ *
+ * 代价是速度：wrapper 每次约 780ms（实测与并发无关，是它去 Apple 取清单的固定成本），
+ * 而直接抓目录清单只要约 100ms。正确性优先，速度靠缓存与限量来补。
  */
 export async function formatsFromCatalog(
     adamId: string,
@@ -469,13 +485,14 @@ export async function formatsFromCatalog(
     const hit = formatCache.get(key);
     if (hit && Date.now() - hit.at < FORMAT_TTL_MS) return hit.formats;
 
+    // 首选：wrapper-lite（与引擎下载同源，权威）
+    const viaWrapper = await songFormats(key);
+    if (viaWrapper.length > 0) return viaWrapper;
+
+    // 兜底：目录给的清单（可能偏低一档，但在 wrapper 不可用时总比"未知"强）
     const direct = /^https?:\/\//i.test(enhancedHls ?? "") ? (enhancedHls as string) : null;
-    if (direct) {
-        const formats = await fetchFormats(direct);
-        if (formats.length > 0) return remember(key, formats);
-    }
-    // 目录没给清单：退到 wrapper
-    return songFormatsWithFallback(key, storefrontOverride);
+    if (!direct) return [];
+    return remember(key, await fetchFormats(direct));
 }
 
 async function fetchFormats(playlist: string): Promise<AudioFormat[]> {
@@ -530,15 +547,49 @@ export async function collectionFormats(
     return mergeFormats(each.flat());
 }
 
-/**
- * 单曲音质的兜底链：目录直接给的 enhancedHls → wrapper-lite。
- * 两条路都失败返回 []（界面显示"未知"），**不猜**。
- *
- * 注意这里没有"按 id 现查目录"的那一条：实测 `/v1/catalog/<sf>/songs/<id>`
+/*
+ * 说明：这里**没有**"按 id 现查目录"的兜底。实测 `/v1/catalog/<sf>/songs/<id>`
  * 即使带 `extend=extendedAssetUrls` 也**不返回** enhancedHls（只有 search 与
  * albums/playlists 的 tracks 关系会返回）。写一条永远不会命中的兜底只会让人误以为有保障。
  */
-export async function songFormatsWithFallback(adamId: string, storefrontOverride?: string): Promise<AudioFormat[]> {
-    void storefrontOverride;
-    return songFormats(adamId);
+
+/* --------------------------------------------------------------- 音乐视频 */
+
+/**
+ * 音乐视频的基本信息（MV 没有"位深/采样率"可言，所以这里只取用来展示的最小集合）。
+ *
+ * 目录里音乐视频是**独立类型**（`music-videos`），有单独的端点与搜索类型，
+ * 与歌曲/专辑并列 —— 实测 `/v1/catalog/<sf>/search?types=music-videos` 返回
+ * `results["music-videos"]`。
+ */
+export type MusicVideoInfo = {
+    id: string;
+    name: string;
+    artistName: string;
+    albumName: string;
+    durationMs?: number;
+    releaseDate?: string;
+    artwork: string;
+    url: string;
+};
+
+export async function musicVideoInfo(adamId: string, storefront?: string): Promise<MusicVideoInfo | null> {
+    const sf = pickStorefront(storefront);
+    const raw = await catalogGet(
+        `/v1/catalog/${encodeURIComponent(sf)}/music-videos/${encodeURIComponent(adamId)}`,
+        {}
+    );
+    const item = ((raw as { data?: RawResource[] } | null)?.data ?? [])[0];
+    if (!item) return null;
+    const a = item.attributes ?? {};
+    return {
+        id: item.id ?? adamId,
+        name: a.name ?? "",
+        artistName: a.artistName ?? "",
+        albumName: a.albumName ?? "",
+        durationMs: typeof a.durationInMillis === "number" ? a.durationInMillis : undefined,
+        releaseDate: a.releaseDate,
+        artwork: (a.artwork?.url ?? "").replace("{w}", "160").replace("{h}", "160"),
+        url: a.url ?? ""
+    };
 }

@@ -42,6 +42,16 @@ assert.ok(!engineArgs("https://music.apple.com/us/album/x/1", "alac").includes("
 assert.ok(engineArgs("https://music.apple.com/us/album/x/1", "aac").includes("--aac"));
 console.log("PASS  engineArgs flags (alac/atmos/aac + --json + --lite-server)");
 
+// MV：引擎按 URL 里的 /music-video/ 自行分派（run.go 的 strings.Contains 与 rip.go 的
+// track.Type == "music-videos" 分支），所以**不能**带任何编码标志。
+// 若这里误加了 --atmos/--aac，引擎会走进音频分支并报 Unavailable。
+const mv = engineArgs("https://music.apple.com/jp/music-video/example/1651604579", "mv");
+assert.ok(!mv.includes("--atmos"), "MV 不该带 --atmos");
+assert.ok(!mv.includes("--aac"), "MV 不该带 --aac");
+assert.ok(mv.includes("--json") && mv.includes("--lite-server"), "MV 仍要 JSON 汇总与 lite-server");
+assert.equal(mv[0], "https://music.apple.com/jp/music-video/example/1651604579");
+console.log("PASS  engineArgs 对 MV 不带编码标志（分派由链接决定）");
+
 // 有曲目失败时引擎**不会**打印 --json 汇总，这行统计是唯一的成败依据（真实输出见下）
 const REAL_SUMMARY = "=======  [✔ ] Completed: 6/7  |  [⚠ ] Warnings: 0  |  [✖ ] Errors: 1  =======";
 assert.deepEqual(

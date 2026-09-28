@@ -32,7 +32,7 @@ function toast(msg) {
 }
 
 /* ---- 首页：两步式「先解析 → 再下载」---- */
-const CODEC_LABEL = { alac: "ALAC 无损", atmos: "Dolby Atmos", aac: "AAC 有损" };
+const CODEC_LABEL = { alac: "ALAC 无损", atmos: "Dolby Atmos", aac: "AAC 有损", mv: "音乐视频（MV）" };
 
 /**
  * 为一个可请求的编码挑出**最具代表性的那条音质明细**，用来写进下拉选项。
@@ -163,6 +163,31 @@ if (jobForm) {
     };
 
     /**
+     * 音乐视频的解析结果面板。
+     *
+     * MV 没有位深/采样率可言，也不需要选编码（引擎按 URL 里的 /music-video/ 自己分派），
+     * 所以这里换掉"编码选择器 + 音质明细"，改说清它会以什么方式落盘 ——
+     * 具体的音轨类型与分辨率上限来自 config.yaml，不是本页面能改的。
+     */
+    const renderMusicVideo = (data) => {
+        if (!qualityPanel) return;
+        qualityPanel.hidden = false;
+        qualityPanel.className = "quality";
+        qualityPanel.innerHTML =
+            `<div class="quality-head"><span>音乐视频（MV）</span></div>` +
+            `<ul class="quality-list">` +
+            `<li><span class="q-kind">内容</span><span class="q-detail">视频 + 音轨，落盘为 .mp4</span>` +
+            `<span class="tag atmos">MV</span></li>` +
+            `<li><span class="q-kind">音轨 / 分辨率</span>` +
+            `<span class="q-detail">按 config.yaml 的 mv-audio-type / mv-max</span></li>` +
+            `<li><span class="q-kind">落盘目录</span><span class="q-detail">mv-save-folder</span></li>` +
+            `</ul>` +
+            `<p class="muted small" style="margin:8px 0 0">` +
+            `MV 不需要选编码：引擎按链接里的 <code>/music-video/</code> 自行分派。` +
+            `位深/采样率是音频曲目的概念，对视频没有意义。</p>`;
+    };
+
+    /**
      * 地区提示：服务端已经把「目标区有没有 / 要不要回退 / 有没有自动匹配」判完，
      * 这里只负责显示。关键是它出现在**点下载之前**，而不是建完任务之后。
      */
@@ -210,6 +235,19 @@ if (jobForm) {
             setRegionNote(data.plan);
             const codecs = data.codecs && data.codecs.length ? data.codecs : ["alac", "atmos", "aac"];
             const formats = Array.isArray(data.formats) ? data.formats : [];
+
+            // 音乐视频：换掉编码选择器 + 音质面板（MV 由链接决定，没有编码可选）
+            if (data.musicVideo) {
+                renderCodecs([data.codecs && data.codecs[0] ? data.codecs[0] : "mv"], []);
+                renderMusicVideo(data);
+                const title = data.title ? `<b>${data.artist ? data.artist + " — " : ""}${data.title}</b> · ` : "";
+                const note = data.note ? ` — ${data.note}` : "";
+                setResult(`${title}已识别为 <b>music-video</b>（音乐视频）${note}`, "ok");
+                parsed = true;
+                if (downloadRow) downloadRow.hidden = false;
+                return;
+            }
+
             renderCodecs(codecs, formats);
             renderQuality(formats);
             const title = data.title ? `<b>${data.artist ? data.artist + " — " : ""}${data.title}</b> · ` : "";

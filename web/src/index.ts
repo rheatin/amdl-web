@@ -12,12 +12,23 @@ import {
     collectionTracks,
     collectionFormats,
     formatsFromCatalog,
+    musicVideoInfo,
+    SEARCH_TYPES,
     SEARCH_TRACK_PROBE_LIMIT,
     type TrackCapability
 } from "./ampmusic.js";
 import { presentFormat, type AudioFormatView } from "./audioformat.js";
 import { mapLimit } from "./concurrency.js";
 import type { AudioFormat } from "./format.js";
+
+/**
+ * 音乐视频的「编码」标识。
+ *
+ * 它**不是**编码 —— MV 由链接决定，引擎不需要任何标志。之所以仍然放进 codec 字段：
+ * 任务记录、重试、界面都需要一个单一的字段来表达"这个任务下的是什么"，
+ * 为 MV 新开一套字段只会让每个消费点都要判断两种形状。
+ */
+const MV_CODEC = "mv";
 import {
     attachUser,
     clearSession,
@@ -76,7 +87,8 @@ app.locals.assetVersion = ((): string => {
  *   * **不用 traits 猜数字**。位深/采样率只有 master playlist 说得准，所以这里真的去取；
  *     取不到就是空数组，视图显示"未取到"，而不是硬写一个 16/44.1。
  *   * 探测失败**不能让搜索页报错** —— 音质是附加信息，目录搜索结果本身才是主功能。
- *   * 只对 `song`/`album` 探测：artist 没有音质可言，music-video 走的是视频轨道。
+ *   * 只对 `song`/`album` 探测：artist 没有音质可言，music-video 走的是视频轨道
+ *     （MV 没有位深/采样率，界面上给一个"下载 MV"按钮即可）。
  *   * 交给视图的必须是 presentFormat 的**呈现形态**（含 detail/label），
  *     不是原始 AudioFormat —— 否则 EJS 里取 f.detail 全是空字符串（上线时实测到过）。
  *   * 曲目**优先用目录直接给的 enhancedHls**（搜索响应里就有，约 100ms），
@@ -203,7 +215,9 @@ app.get("/search", requireAuth, async (req: Request, res: Response) => {
     let error: string | null = null;
     if (q) {
         try {
-            results = await searchCatalog(q, "songs,albums,artists", 12, region || undefined);
+            // music-videos 一起搜：目录把它当独立类型，不显式请求就不会出现在结果里。
+            // 排序仍由 searchCatalog 保证（song → album → artist → music-video）。
+            results = await searchCatalog(q, SEARCH_TYPES, 12, region || undefined);
         } catch (err) {
             error = err instanceof Error ? err.message : String(err);
         }
@@ -432,6 +446,10 @@ async function planRegion(
  *
  * 另外返回 `formats` —— 每个可用变体的**位深与采样率**（以及 Hi-Res / Dolby Atmos 判定）。
  * 它来自 master playlist 的 SAMPLE-RATE/BIT-DEPTH，是 audioTraits 给不出的信息。
+ *
+ * 音乐视频（`/music-video/...`）单独走一支：MV 是视频，没有位深/采样率可言，
+ * 也不需要选编码（引擎按 URL 自行分派到 MV 下载）。返回 `musicVideo: true` +
+ * `codecs: ["mv"]`，界面据此换掉编码选择器。
  */
 app.get("/api/codecs", requireAuth, async (req: Request, res: Response) => {
     const raw = String(req.query["url"] ?? "").trim();
@@ -445,6 +463,35 @@ app.get("/api/codecs", requireAuth, async (req: Request, res: Response) => {
     // 自动匹配换的是**另一条记录**，能力/标题要按匹配到的那条查，否则界面会自相矛盾
     const probeKind = plan.reason === "matched" && plan.match ? "song" : link.kind;
     const probeId = plan.reason === "matched" && plan.match ? plan.match.id : link.id;
+
+    // ---- 音乐视频：不查 audioTraits（那不是音频），只取标题/艺人用于确认 ----
+    if (link.kind === "music-video") {
+        try {
+            const mv = await musicVideoInfo(probeId, plan.effective || link.storefront);
+            res.json({
+                codecs: [MV_CODEC],
+                musicVideo: true,
+                title: mv?.name ?? "",
+                artist: mv?.artistName ?? "",
+                album: mv?.albumName ?? "",
+                summary: "音乐视频（MV）",
+                source: "音乐视频",
+                resolved: link,
+                plan
+            });
+        } catch (err) {
+            // 取不到元数据不影响建任务 —— 引擎只按 URL 工作
+            res.json({
+                codecs: [MV_CODEC],
+                musicVideo: true,
+                summary: "音乐视频（MV）",
+                note: `未能取到视频信息（${err instanceof Error ? err.message : String(err)}），仍可直接下载`,
+                resolved: link,
+                plan
+            });
+        }
+        return;
+    }
 
     try {
         // 先按实际会取数的地区查（链接自带的地区 / 用户选的地区），失败再试配置里的地区
@@ -523,13 +570,18 @@ app.post("/api/apple/2fa", requireAuth, (req: Request, res: Response) => {
  */
 app.post("/api/jobs", requireAuth, async (req: Request, res: Response) => {
     const url = String(req.body?.url ?? "").trim();
-    const codec = String(req.body?.codec ?? "alac").trim();
+    let codec = String(req.body?.codec ?? "alac").trim();
     if (!/^https?:\/\/(music|classical)\.apple\.com\//i.test(url)) {
         res.status(400).json({ error: "expected an https://music.apple.com/... link" });
         return;
     }
-    if (!["alac", "atmos", "aac"].includes(codec)) {
-        res.status(400).json({ error: "codec must be alac, atmos or aac" });
+    // MV 由**链接**决定，不由 codec 决定：引擎按 URL 里的 /music-video/ 自行分派。
+    // 所以贴 MV 链接时即使前端传了 alac 也强制成 mv，避免任务记录写着"alac"、
+    // 实际却下了个视频（那会让任务页与重试按钮都在说谎）。
+    if (parseAppleMusicUrl(url).kind === "music-video") codec = MV_CODEC;
+
+    if (![...ALL_CODECS, MV_CODEC].includes(codec as never)) {
+        res.status(400).json({ error: `codec must be one of ${[...ALL_CODECS, MV_CODEC].join(", ")}` });
         return;
     }
     const rawRegion = req.body?.region;
