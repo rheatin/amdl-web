@@ -11,6 +11,9 @@
 
         <div id="parse-result" class="parse-result muted">粘贴链接后会自动解析，确认可用编码再下载。</div>
 
+        <%# 音质明细：位深 / 采样率 / Hi-Res / Dolby Atmos —— 由 app.js 在解析后填充 %>
+        <div id="quality-panel" hidden></div>
+
         <div class="row" id="region-row">
             <label class="inline-field">元数据地区
                 <%- include("partials/region-select", {

@@ -3,7 +3,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { capabilityFor, searchCatalog, ALL_CODECS } from "./ampmusic.js";
+import { capabilityFor, searchCatalog, ALL_CODECS, songFormats, withFormats, type TrackCapability } from "./ampmusic.js";
+import { codecLabel, describeFormat, formatLabel, type AudioFormat } from "./format.js";
 import {
     attachUser,
     clearSession,
@@ -52,6 +53,105 @@ app.locals.assetVersion = ((): string => {
         return "dev";
     }
 })();
+
+/* ------------------------------------------------- 页面用的音质明细小工具 */
+
+/**
+ * 给搜索结果补上音质明细，供视图直接渲染。
+ *
+ * 设计约束：
+ *   * **不用 traits 猜数字**。位深/采样率只有 master playlist 说得准，所以这里真的去取；
+ *     取不到就是空数组，视图显示"未取到"，而不是硬写一个 16/44.1。
+ *   * 探测失败**不能让搜索页报错** —— 音质是附加信息，目录搜索结果本身才是主功能。
+ *   * 只对 `song`/`album` 探测：artist 没有音质可言，music-video 走的是视频轨道。
+ *
+ * 视图只消费 `formats`（自己挑要显示哪几条），所以这里不预先算摘要串 ——
+ * 少一份"和 format.ts 里的措辞可能不一致"的副本。
+ */
+async function decorateFormats(
+    items: Array<{ id: string; type: string }>
+): Promise<Array<{ formats: AudioFormat[] }>> {
+    return Promise.all(
+        items.map(async (item) => {
+            if (!/^\d+$/.test(item.id)) return { formats: [] as AudioFormat[] };
+            if (item.type !== "song" && item.type !== "album") return { formats: [] as AudioFormat[] };
+            try {
+                return { formats: await songFormats(item.id) };
+            } catch {
+                return { formats: [] as AudioFormat[] };
+            }
+        })
+    );
+}
+
+async function decorateSearchResults<T extends { id: string; type: string }>(
+    results: T[]
+): Promise<Array<T & { formats: AudioFormat[] }>> {
+    const quality = await decorateFormats(results);
+    return results.map((r, i) => ({ ...r, ...(quality[i] ?? { formats: [] }) }));
+}
+
+/**
+ * 单曲的音质明细（解析链接预览用）。非法 id 直接返回空 —— 不拿一个空 id 去打 wrapper。
+ * 专辑/播放列表走 ampmusic.withFormats（逐曲探测再合并）。
+ */
+async function formatsFor(id: string): Promise<AudioFormat[]> {
+    if (!/^\d+$/.test(id)) return [];
+    try {
+        return await songFormats(id);
+    } catch {
+        return [];
+    }
+}
+
+/** 探测音质的总时限：宁可界面先出来显示"未知"，也不要卡住整个解析预览。 */
+const FORMAT_PROBE_BUDGET_MS = 20_000;
+
+async function attachFormats(cap: TrackCapability, storefrontOverride?: string): Promise<TrackCapability> {
+    const budget = new Promise<TrackCapability>((resolve) =>
+        setTimeout(() => resolve(cap), FORMAT_PROBE_BUDGET_MS)
+    );
+    try {
+        return await Promise.race([withFormats(cap, storefrontOverride), budget]);
+    } catch {
+        return cap;
+    }
+}
+
+/**
+ * 给浏览器的音质对象。
+ *
+ * 标签在**服务端**算好（`label` / `detail` / `kind`），前端只负责摆放 ——
+ * 否则「24-bit/96 kHz 该怎么写」这件事会在 TS 与零框架 JS 里各实现一遍，
+ * 两边迟早不一致（这个项目已经因为重复实现踩过 parseAppleMusicUrl 的同类坑）。
+ */
+function presentFormat(f: AudioFormat): {
+    codec: string;
+    kind: string;
+    bitDepth: number | null;
+    sampleRate: number | null;
+    channels: number | null;
+    bitrateKbps: number | null;
+    lossless: boolean;
+    hiRes: boolean;
+    atmos: boolean;
+    detail: string;
+    label: string;
+} {
+    return {
+        codec: f.codec,
+        kind: codecLabel(f.codec),
+        bitDepth: f.bitDepth ?? null,
+        sampleRate: f.sampleRate ?? null,
+        channels: f.channels ?? null,
+        bitrateKbps: f.bitrateKbps ?? null,
+        lossless: f.lossless,
+        hiRes: f.hiRes,
+        atmos: f.atmos,
+        detail: describeFormat(f),
+        label: formatLabel(f)
+    };
+}
 
 /* ------------------------------------------------------------------ pages */
 
@@ -114,9 +214,17 @@ app.get("/search", requireAuth, async (req: Request, res: Response) => {
             error = err instanceof Error ? err.message : String(err);
         }
     }
+
+    // 每条结果挂上音质明细（位深/采样率/Hi-Res/Atmos）。
+    // 这是本页唯一会"变慢"的地方：最多 12 条结果同时去问 wrapper-lite（每条一次 /m3u8
+    // 加一次抓 playlist，实测约 1 秒），所以首次搜索大约多等一两秒。
+    // 之后同一曲目命中 songFormats 的 10 分钟缓存，重复搜索基本不再打 wrapper。
+    // 只对 song/album 探测，artist 与 music-video 直接空手返回。
+    const withQuality = await decorateSearchResults(results);
+
     res.render("search", {
         q,
-        results,
+        results: withQuality,
         error,
         region,
         // 两个都是**字符串**（视图直接显示，不要再当函数调）：
@@ -329,6 +437,9 @@ async function planRegion(
  *
  * 这里同时返回**地区计划**（requested/effective/fallback/note），
  * 于是「选了日区但日区没有 → 会回退」这件事在**点下载之前**就能看到。
+ *
+ * 另外返回 `formats` —— 每个可用变体的**位深与采样率**（以及 Hi-Res / Dolby Atmos 判定）。
+ * 它来自 master playlist 的 SAMPLE-RATE/BIT-DEPTH，是 audioTraits 给不出的信息。
  */
 app.get("/api/codecs", requireAuth, async (req: Request, res: Response) => {
     const raw = String(req.query["url"] ?? "").trim();
@@ -352,20 +463,23 @@ app.get("/api/codecs", requireAuth, async (req: Request, res: Response) => {
         if (!cap) {
             res.json({
                 codecs: [...ALL_CODECS],
+                formats: await formatsFor(probeId),
                 note: link.note ?? `Apple 未返回该${link.kind}的能力信息`,
                 resolved: link,
                 plan
             });
             return;
         }
+        const withQuality = await attachFormats(cap, plan.effective || link.storefront);
         res.json({
-            codecs: cap.codecs,
-            traits: cap.traits,
-            summary: cap.summary,
-            source: cap.source,
-            title: cap.name,
-            artist: cap.artistName,
-            album: cap.albumName,
+            codecs: withQuality.codecs,
+            traits: withQuality.traits,
+            summary: withQuality.summary,
+            source: withQuality.source,
+            title: withQuality.name,
+            artist: withQuality.artistName,
+            album: withQuality.albumName,
+            formats: withQuality.formats.map(presentFormat),
             resolved: link,
             plan
         });

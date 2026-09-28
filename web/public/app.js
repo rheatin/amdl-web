@@ -34,7 +34,35 @@ function toast(msg) {
 /* ---- 首页：两步式「先解析 → 再下载」---- */
 const CODEC_LABEL = { alac: "ALAC 无损", atmos: "Dolby Atmos", aac: "AAC 有损" };
 
-function renderCodecs(codecs) {
+/**
+ * 为一个可请求的编码挑出**最具代表性的那条音质明细**，用来写进下拉选项。
+ *
+ * 同一个编码可能有多条规格（例如 AAC 有 256/128 两档、ALAC 在同一张专辑里可能有
+ * 24/96 与 16/44.1 两种），选项文字只放一条 —— 取最好的那条，完整清单在旁边的
+ * 音质面板里列全。取不到就返回 null，标签退回原来的编码名（绝不编数字）。
+ */
+function bestFormatFor(codec, formats) {
+    if (!Array.isArray(formats) || formats.length === 0) return null;
+    const pick = {
+        alac: (f) => f.codec === "alac",
+        atmos: (f) => f.atmos,
+        aac: (f) => f.codec === "aac" || f.codec === "he-aac"
+    }[codec];
+    if (!pick) return null;
+    const candidates = formats.filter(pick);
+    if (candidates.length === 0) return null;
+    // formats 已由服务端排序（无损在前、位深/采样率/码率降序），第一条就是最好的
+    return candidates[0];
+}
+
+/** 下拉选项文字：`ALAC 无损 · 24-bit/96 kHz · Hi-Res`。 */
+function codecOptionLabel(codec, formats) {
+    const best = bestFormatFor(codec, formats);
+    const base = CODEC_LABEL[codec] || codec;
+    return best && best.label ? `${base} · ${best.detail}` : base;
+}
+
+function renderCodecs(codecs, formats) {
     const sel = document.getElementById("job-codec");
     if (!sel) return;
     const prev = sel.value;
@@ -42,7 +70,7 @@ function renderCodecs(codecs) {
     codecs.forEach((c) => {
         const o = document.createElement("option");
         o.value = c;
-        o.textContent = CODEC_LABEL[c] || c;
+        o.textContent = codecOptionLabel(c, formats);
         sel.appendChild(o);
     });
     if (codecs.includes(prev)) sel.value = prev;
@@ -81,6 +109,60 @@ if (jobForm) {
     };
 
     /**
+     * 音质明细面板：把「这首歌到底有什么音质」逐条列出来。
+     *
+     * 位深与采样率来自 master playlist 的 BIT-DEPTH / SAMPLE-RATE（服务端已算好 label / detail），
+     * 所以这里是纯呈现 —— 前端不重复实现一遍「24-bit/96 kHz 该怎么拼」。
+     */
+    const qualityPanel = document.getElementById("quality-panel");
+    const renderQuality = (formats) => {
+        if (!qualityPanel) return;
+        // 拿不到明细就整块不显示 —— 播放列表/艺人本来就没有单曲音质，
+        // 摆一句"拿不到"只是噪音。解析结果行里已经有编码信息了。
+        if (!Array.isArray(formats) || formats.length === 0) {
+            resetQuality();
+            return;
+        }
+        const rows = formats
+            .map((f) => {
+                const badges = [];
+                if (f.lossless) badges.push(`<span class="tag ok">无损</span>`);
+                if (f.hiRes) badges.push(`<span class="tag hires">Hi-Res</span>`);
+                if (f.atmos) badges.push(`<span class="tag atmos">Dolby Atmos</span>`);
+                if (!f.lossless && f.codec === "aac") badges.push(`<span class="tag">有损</span>`);
+                return (
+                    `<li>` +
+                    `<span class="q-kind">${f.kind}</span>` +
+                    `<span class="q-detail">${f.detail}</span>` +
+                    badges.join("") +
+                    `</li>`
+                );
+            })
+            .join("");
+        qualityPanel.hidden = false;
+        qualityPanel.className = "quality";
+        qualityPanel.innerHTML =
+            `<div class="quality-head"><span>音质明细</span>` +
+            `<button type="button" class="ghost" id="quality-toggle">收起</button></div>` +
+            `<ul class="quality-list">${rows}</ul>`;
+        const toggle = document.getElementById("quality-toggle");
+        const list = qualityPanel.querySelector(".quality-list");
+        if (toggle && list) {
+            toggle.addEventListener("click", () => {
+                const wasHidden = list.hidden;
+                list.hidden = !wasHidden;
+                toggle.textContent = wasHidden ? "收起" : "展开";
+            });
+        }
+    };
+
+    const resetQuality = () => {
+        if (!qualityPanel) return;
+        qualityPanel.hidden = true;
+        qualityPanel.innerHTML = "";
+    };
+
+    /**
      * 地区提示：服务端已经把「目标区有没有 / 要不要回退 / 有没有自动匹配」判完，
      * 这里只负责显示。关键是它出现在**点下载之前**，而不是建完任务之后。
      */
@@ -102,6 +184,7 @@ if (jobForm) {
     const resetParse = () => {
         parsed = false;
         if (downloadRow) downloadRow.hidden = true;
+        resetQuality();
         setRegionNote(null);
     };
 
@@ -126,7 +209,9 @@ if (jobForm) {
             }
             setRegionNote(data.plan);
             const codecs = data.codecs && data.codecs.length ? data.codecs : ["alac", "atmos", "aac"];
-            renderCodecs(codecs);
+            const formats = Array.isArray(data.formats) ? data.formats : [];
+            renderCodecs(codecs, formats);
+            renderQuality(formats);
             const title = data.title ? `<b>${data.artist ? data.artist + " — " : ""}${data.title}</b> · ` : "";
             const src = data.source ? `（${data.source}）` : "";
             const note = data.note ? ` — ${data.note}` : "";
@@ -140,6 +225,7 @@ if (jobForm) {
         } catch (err) {
             // 网络异常时不彻底拦死：给出全部编码让用户自己决定
             renderCodecs(["alac", "atmos", "aac"]);
+            resetQuality();
             setRegionNote(null);
             setResult(`解析出错：${err.message}（已回退为全部编码）`, "err");
             parsed = true;

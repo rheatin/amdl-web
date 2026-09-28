@@ -581,6 +581,126 @@ button.danger {
     font-size: 12.5px;
 }
 
+/* ------------------------------------------------- 音质明细（位深/采样率/Hi-Res/Atmos） */
+
+/*
+ * 为什么单独一套样式而不是复用 .badge：徽章那套是「状态」（done/failed），
+ * 这里表达的是「规格」。混用会让"无损"看起来像一个任务状态。
+ */
+.quality {
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm);
+    background: var(--bg-soft);
+    padding: 9px 11px;
+}
+.quality-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--fg-muted);
+    margin-bottom: 6px;
+}
+.quality-head button {
+    padding: 2px 8px;
+    font-size: 11.5px;
+}
+.quality-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.quality-list li {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+    font-size: 12.5px;
+}
+.q-kind {
+    min-width: 92px;
+    color: var(--fg);
+    font-weight: 600;
+}
+.q-detail {
+    font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    color: var(--fg-muted);
+}
+
+/* 规格标签：无损 / Hi-Res / Atmos / 有损 */
+.tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 7px;
+    border-radius: var(--radius-pill);
+    font-size: 11px;
+    line-height: 1.6;
+    background: var(--surface-2);
+    color: var(--fg-muted);
+    border: 1px solid var(--line-soft);
+    white-space: nowrap;
+}
+.tag.ok {
+    background: var(--ok-soft);
+    color: var(--ok);
+    border-color: rgba(70, 201, 139, 0.3);
+}
+.tag.hires {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent-line);
+}
+.tag.atmos {
+    background: var(--warn-soft);
+    color: var(--warn);
+    border-color: rgba(227, 179, 65, 0.32);
+}
+
+/* 搜索结果里的一行紧凑规格芯片 */
+.result-quality {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 5px;
+}
+.q-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 8px;
+    border-radius: var(--radius-pill);
+    font-size: 11.5px;
+    font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    background: var(--surface-2);
+    color: var(--fg-muted);
+    border: 1px solid var(--line-soft);
+    white-space: nowrap;
+}
+.q-chip.ok {
+    color: #cdebd9;
+    border-color: rgba(70, 201, 139, 0.3);
+}
+.q-chip.hires {
+    color: var(--accent);
+    border-color: var(--accent-line);
+}
+.q-chip.atmos {
+    color: var(--warn);
+    border-color: rgba(227, 179, 65, 0.32);
+}
+
+/* 下载按钮的副标题（把位深/采样率直接标在按钮上，点之前就看得见） */
+.result .actions button .btn-sub {
+    display: block;
+    font-size: 10px;
+    font-weight: 400;
+    opacity: 0.85;
+    letter-spacing: 0.2px;
+}
+
 /* --------------------------------------------------------------- 解析结果 */
 
 .parse-result {

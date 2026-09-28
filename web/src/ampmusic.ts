@@ -12,6 +12,7 @@
  * The JWT is the public web-player developer token, not a user credential.
  */
 import { config, language, storefront } from "./config.js";
+import { mergeFormats, parseMasterPlaylist, type AudioFormat } from "./format.js";
 
 const UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -191,6 +192,16 @@ export type TrackCapability = {
     summary: string;
     /** 能力信息的来源：单曲 / 专辑曲目合集 / 播放列表曲目合集 */
     source: string;
+    /**
+     * 该链接实际覆盖的曲目 id（专辑/播放列表是全部曲目，单曲只有一个）。
+     * 音质明细要逐曲去 master playlist 取位深/采样率，靠这个列表。
+     */
+    trackIds: string[];
+    /**
+     * 每个可用变体的音质明细（含位深、采样率、Hi-Res / Dolby Atmos 判定）。
+     * 取不到时是空数组 —— 界面据此显示"未知"，绝不用 traits 猜一个数字出来。
+     */
+    formats: AudioFormat[];
 };
 
 /** traits -> 可请求的编码，顺序固定为 alac, atmos, aac。 */
@@ -247,7 +258,9 @@ export async function trackCapability(adamId: string, storefront?: string): Prom
         codecs: mapTraits(traits),
         durationMs: typeof a.durationInMillis === "number" ? a.durationInMillis : undefined,
         summary: summarizeTraits(traits),
-        source: "单曲"
+        source: "单曲",
+        trackIds: [item.id ?? adamId],
+        formats: []
     };
 }
 
@@ -277,6 +290,7 @@ async function collectionCapability(
     const traits = [...union];
     const a = item.attributes ?? {};
     const label = kind === "albums" ? "专辑" : "播放列表";
+    const trackIds = tracks.map((t) => t.id ?? "").filter((v) => /^\d+$/.test(v));
 
     return {
         id: item.id ?? id,
@@ -286,8 +300,33 @@ async function collectionCapability(
         traits,
         codecs: tracks.length > 0 ? mapTraits(traits) : [...ALL_CODECS],
         summary: tracks.length > 0 ? summarizeTraits(traits) : "未知",
-        source: tracks.length > 0 ? `${label}（${tracks.length} 首曲目的能力合集）` : label
+        source: tracks.length > 0 ? `${label}（${tracks.length} 首曲目的能力合集）` : label,
+        trackIds,
+        formats: []
     };
+}
+
+/**
+ * 给一份能力补上**每个变体的音质明细**。
+ *
+ * 失败一律降级为「没有明细」而不是抛错：音质是附加信息，
+ * 不该因为它拿不到就让整个解析预览失败（原有三项回退语义必须保住）。
+ */
+export async function withFormats(
+    cap: TrackCapability,
+    storefrontOverride?: string
+): Promise<TrackCapability> {
+    try {
+        if (cap.trackIds.length <= 1) {
+            const id = cap.trackIds[0] ?? cap.id;
+            return { ...cap, formats: await songFormatsWithFallback(id, storefrontOverride) };
+        }
+        // 专辑/播放列表：逐曲取（并发受限），再合并去重
+        const each = await mapLimit(cap.trackIds, COLLECTION_LIMIT, (id) => songFormats(id));
+        return { ...cap, formats: mergeFormats(each.flat()) };
+    } catch {
+        return cap;
+    }
 }
 
 /** 按链接类型取真实能力；artist/unknown 返回 null 交由调用方回落。 */
@@ -300,4 +339,126 @@ export async function capabilityFor(
     if (kind === "album") return collectionCapability("albums", id, storefront);
     if (kind === "playlist") return collectionCapability("playlists", id, storefront);
     return null;
+}
+
+/* ------------------------------------------------- 每个变体的音质明细（位深/采样率） */
+
+/**
+ * 音质明细的取数路径 —— 为什么走 wrapper-lite 而不是目录 API：
+ *
+ *   `audioTraits` 只说得出「有没有 hi-res-lossless」，**说不出位深与采样率**
+ *   （这是用户真正要看的两项）。权威值在 master playlist 的
+ *   `SAMPLE-RATE=` / `BIT-DEPTH=` 上，而要拿到它必须先有一个 HLS 播放清单 URL。
+ *
+ *   wrapper-lite 的 `/m3u8?adamId=<id>` 正是干这个的：本地 HTTP、自动带账号令牌，
+ *   实测返回 `{"code":0,...,"data":{"m3u8":"https://aod.itunes.apple.com/.../x_lossless.m3u8"}}`。
+ *   目录的 `extendedAssetUrls.enhancedHls` 也能给，但它依赖公开开发者 token，
+ *   而这个 token 在本项目里是会过期、要轮换的（见 tokenCandidates），
+ *   音质这种"顺手一看"的信息不该压在它身上 —— 所以它只作为兜底。
+ */
+
+type CacheEntry = { formats: AudioFormat[]; at: number };
+const formatCache = new Map<string, CacheEntry>();
+const FORMAT_TTL_MS = 10 * 60_000;
+const FORMAT_CACHE_MAX = 500;
+
+/** 向 wrapper-lite 要某首歌的 master playlist URL（这是唯一的"额外"依赖）。 */
+async function masterPlaylistUrl(adamId: string): Promise<string | null> {
+    const base = config.liteServer.trim().replace(/\/+$/, "");
+    if (!base) return null;
+    const url = `${base}/m3u8?adamId=${encodeURIComponent(adamId)}`;
+    try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+        if (!res.ok) return null;
+        const body = (await res.json()) as { code?: number; data?: { m3u8?: string } };
+        if (body.code !== 0) return null;
+        const m3u8 = body.data?.m3u8 ?? "";
+        return /^https?:\/\//i.test(m3u8) ? m3u8 : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 抓一份 master playlist 并解析出全部可用变体。
+ * wrapper 不认批量（`?ids=` 会报 missing adamId），所以调用方要自己控并发。
+ */
+export async function songFormats(adamId: string): Promise<AudioFormat[]> {
+    const key = String(adamId);
+    const hit = formatCache.get(key);
+    if (hit && Date.now() - hit.at < FORMAT_TTL_MS) return hit.formats;
+
+    const playlist = await masterPlaylistUrl(key);
+    // m3u8 拿不到时**不缓存空结果**：wrapper 刚起来/网络抖一下是暂时的，
+    // 缓存住会让整首歌在这次会话里永远显示"未知"。
+    if (!playlist) return [];
+
+    let formats: AudioFormat[] = [];
+    try {
+        const res = await fetch(playlist, { signal: AbortSignal.timeout(15_000) });
+        if (res.ok) formats = parseMasterPlaylist(await res.text());
+    } catch {
+        return [];
+    }
+
+    if (formats.length > 0) {
+        if (formatCache.size >= FORMAT_CACHE_MAX) formatCache.clear();
+        formatCache.set(key, { formats, at: Date.now() });
+    }
+    return formats;
+}
+
+/** 有上限的并发映射 —— 只为保护 NAS，不是性能优化。 */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+    const out: R[] = new Array(items.length);
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        for (;;) {
+            const i = cursor++;
+            if (i >= items.length) return;
+            out[i] = await fn(items[i]!);
+        }
+    });
+    await Promise.all(workers);
+    return out;
+}
+
+const COLLECTION_LIMIT = 4;
+
+/** 专辑/播放列表：逐曲取音质再去重合并（分组合并后才能说"这张有哪些规格"）。 */
+export async function collectionFormats(adamIds: string[]): Promise<AudioFormat[]> {
+    const ids = [...new Set(adamIds.filter((v) => /^\d+$/.test(v)))];
+    if (ids.length === 0) return [];
+    const each = await mapLimit(ids, COLLECTION_LIMIT, (id) => songFormats(id));
+    return mergeFormats(each.flat());
+}
+
+/** 目录兜底：`extendedAssetUrls.enhancedHls`（公开 token 失效时可能拿不到）。 */
+async function catalogMasterPlaylistUrl(adamId: string, storefrontOverride?: string): Promise<string | null> {
+    const sf = pickStorefront(storefrontOverride);
+    const raw = await catalogGet(`/v1/catalog/${encodeURIComponent(sf)}/songs/${encodeURIComponent(adamId)}`, {
+        extend: "extendedAssetUrls"
+    });
+    const item = ((raw as { data?: RawResource[] } | null)?.data ?? [])[0];
+    const attrs = item?.attributes as (RawAttrs & { extendedAssetUrls?: { enhancedHls?: string } }) | undefined;
+    const url = attrs?.extendedAssetUrls?.enhancedHls ?? "";
+    return /^https?:\/\//i.test(url) ? url : null;
+}
+
+/**
+ * 单曲音质：wrapper-lite 走不通时退到目录的 enhancedHls。
+ * 两条路都失败返回 []（界面显示"未知"），**不猜**。
+ */
+export async function songFormatsWithFallback(adamId: string, storefrontOverride?: string): Promise<AudioFormat[]> {
+    const viaWrapper = await songFormats(adamId);
+    if (viaWrapper.length > 0) return viaWrapper;
+    const playlist = await catalogMasterPlaylistUrl(adamId, storefrontOverride).catch(() => null);
+    if (!playlist) return [];
+    try {
+        const res = await fetch(playlist, { signal: AbortSignal.timeout(15_000) });
+        if (!res.ok) return [];
+        return parseMasterPlaylist(await res.text());
+    } catch {
+        return [];
+    }
 }

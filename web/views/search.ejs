@@ -19,6 +19,12 @@
     <p class="muted small">
         搜索范围：<b><%= regionName %></b><%= usingOverride ? "（本次临时指定）" : `　— 换商店可以搜到该区的元数据写法（例如日文原名），点结果里的下载按钮会带着这个商店一起建任务。` %>
     </p>
+    <p class="muted small">
+        每条结果下面的<strong>音质芯片</strong>是该曲目实际可下的规格（位深 / 采样率 / Hi-Res / Dolby Atmos）。
+        它取自 Apple 的播放清单，所以<strong>比"ALAC / AAC"这种笼统标签更准</strong>：
+        ALAC 也分 16-bit/44.1 kHz 与 24-bit/96 kHz（后者才是 Hi-Res）。
+        取数要访问 wrapper-lite，首次搜索会略慢几秒，之后同一曲目命中缓存。
+    </p>
     <% if (error) { %><p class="err">搜索失败：<%= error %></p><% } %>
 </section>
 
@@ -43,12 +49,35 @@
                     <% if (r.albumName) { %> · <%= r.albumName %><% } %>
                     <% if (r.trackCount) { %> · <%= r.trackCount %> 首<% } %>
                 </div>
+                <%# 音质明细：位深 / 采样率 / Hi-Res / Atmos 取自该曲目的 master playlist（见 src/format.ts） %>
+                <% if (r.formats && r.formats.length) { %>
+                    <div class="result-quality">
+                        <% r.formats.slice(0, 4).forEach(function (f) { %>
+                            <span class="q-chip <%= f.hiRes ? 'hires' : (f.atmos ? 'atmos' : (f.lossless ? 'ok' : '')) %>"
+                                  title="<%= f.label %>"><%= f.detail %><% if (f.hiRes) { %> Hi-Res<% } %><% if (f.atmos) { %> Atmos<% } %></span>
+                        <% }); %>
+                        <% if (r.formats.length > 4) { %><span class="muted small">+<%= r.formats.length - 4 %></span><% } %>
+                    </div>
+                <% } else if (r.type === "song" || r.type === "album") { %>
+                    <div class="muted small">音质：未取到（wrapper-lite 没返回该曲目的播放清单）</div>
+                <% } %>
             </div>
             <div class="actions">
                 <% if (r.url) { %>
-                    <button class="dl" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="alac">ALAC</button>
-                    <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="atmos">Atmos</button>
-                    <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="aac">AAC</button>
+                    <%
+                    /* 按编码挑一条最有代表性的音质写进按钮副标题 —— 免得"点 ALAC 才发现是 16/44.1" */
+                    const byCodec = {};
+                    (r.formats || []).forEach(function (f) {
+                        const k = f.atmos ? "atmos" : (f.codec === "alac" ? "alac" : ((f.codec === "aac" || f.codec === "he-aac") ? "aac" : null));
+                        if (k && !byCodec[k]) byCodec[k] = f;
+                    });
+                    %>
+                    <button class="dl" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="alac"
+                            title="<%= byCodec.alac ? byCodec.alac.label : 'ALAC 无损' %>">ALAC<% if (byCodec.alac) { %><span class="btn-sub"><%= byCodec.alac.detail %></span><% } %></button>
+                    <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="atmos"
+                            title="<%= byCodec.atmos ? byCodec.atmos.label : 'Dolby Atmos' %>">Atmos<% if (byCodec.atmos) { %><span class="btn-sub"><%= byCodec.atmos.detail %></span><% } %></button>
+                    <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="aac"
+                            title="<%= byCodec.aac ? byCodec.aac.label : 'AAC 有损' %>">AAC<% if (byCodec.aac) { %><span class="btn-sub"><%= byCodec.aac.detail %></span><% } %></button>
                 <% } else { %>
                     <span class="muted">无可下载链接</span>
                 <% } %>
