@@ -12,6 +12,7 @@
  * The JWT is the public web-player developer token, not a user credential.
  */
 import { config, language, storefront } from "./config.js";
+import { mapLimit } from "./concurrency.js";
 import { mergeFormats, parseMasterPlaylist, type AudioFormat } from "./format.js";
 
 const UA =
@@ -116,6 +117,8 @@ export type SearchItem = {
     trackCount?: number;
     releaseDate?: string;
     durationMs?: number;
+    /** 目录给的增强 HLS 清单地址（音质明细的首选取数来源，见 formatsFromCatalog）。 */
+    enhancedHls?: string;
 };
 
 type RawAttrs = {
@@ -128,9 +131,17 @@ type RawAttrs = {
     durationInMillis?: number;
     artwork?: { url?: string };
     audioTraits?: string[];
+    /** 目录给的增强 HLS 清单地址 —— 音质明细的首选取数来源（见 formatsFromCatalog）。 */
+    extendedAssetUrls?: { enhancedHls?: string };
 };
 
 type RawItem = { id?: string; type?: string; attributes?: RawAttrs };
+
+/** 从目录条目里取增强 HLS 地址（缺失或非 http 一律视为没有）。 */
+function enhancedHlsOf(item: { attributes?: RawAttrs } | undefined): string | undefined {
+    const url = item?.attributes?.extendedAssetUrls?.enhancedHls ?? "";
+    return /^https?:\/\//i.test(url) ? url : undefined;
+}
 
 export async function searchCatalog(
     term: string,
@@ -141,7 +152,9 @@ export async function searchCatalog(
 ): Promise<SearchItem[]> {
     const raw = await catalogGet(
         `/v1/catalog/${encodeURIComponent(pickStorefront(storefrontOverride))}/search`,
-        { term, types, limit: String(limit), offset: "0" }
+        // extend 是必须的：搜索结果本身就带 enhancedHls，音质明细因此不必再问 wrapper
+        // （实测 wrapper 每次约 780ms，而直接抓清单约 100ms）。
+        { term, types, limit: String(limit), offset: "0", extend: "extendedAssetUrls" }
     );
     const body = raw as { results?: Record<string, { data?: RawItem[] } | undefined> };
     const out: SearchItem[] = [];
@@ -162,7 +175,8 @@ export async function searchCatalog(
                 url: a.url ?? "",
                 trackCount: a.trackCount,
                 releaseDate: a.releaseDate,
-                durationMs: a.durationInMillis
+                durationMs: a.durationInMillis,
+                enhancedHls: enhancedHlsOf(item)
             });
         }
     }
@@ -197,6 +211,11 @@ export type TrackCapability = {
      * 音质明细要逐曲去 master playlist 取位深/采样率，靠这个列表。
      */
     trackIds: string[];
+    /**
+     * 与 trackIds 一一对应的目录增强 HLS 清单地址（可能缺失）。
+     * 有它就不必问 wrapper-lite —— 这是音质明细的首选取数路径。
+     */
+    trackHls: Array<string | undefined>;
     /**
      * 每个可用变体的音质明细（含位深、采样率、Hi-Res / Dolby Atmos 判定）。
      * 取不到时是空数组 —— 界面据此显示"未知"，绝不用 traits 猜一个数字出来。
@@ -260,6 +279,7 @@ export async function trackCapability(adamId: string, storefront?: string): Prom
         summary: summarizeTraits(traits),
         source: "单曲",
         trackIds: [item.id ?? adamId],
+        trackHls: [enhancedHlsOf(item)],
         formats: []
     };
 }
@@ -290,7 +310,11 @@ async function collectionCapability(
     const traits = [...union];
     const a = item.attributes ?? {};
     const label = kind === "albums" ? "专辑" : "播放列表";
-    const trackIds = tracks.map((t) => t.id ?? "").filter((v) => /^\d+$/.test(v));
+    const trackItems = tracks.filter((t) => /^\d+$/.test(t.id ?? ""));
+    const trackIds = trackItems.map((t) => t.id as string);
+    // 曲目列表里就带着增强 HLS 地址（实测专辑 tracks 关系带 extend 后会有），
+    // 于是解析预览对整张专辑也**不必逐曲问 wrapper**。
+    const trackHls = trackItems.map((t) => enhancedHlsOf(t));
 
     return {
         id: item.id ?? id,
@@ -302,8 +326,32 @@ async function collectionCapability(
         summary: tracks.length > 0 ? summarizeTraits(traits) : "未知",
         source: tracks.length > 0 ? `${label}（${tracks.length} 首曲目的能力合集）` : label,
         trackIds,
+        trackHls,
         formats: []
     };
+}
+
+/**
+ * 专辑/播放列表里的曲目（id + 目录给的增强 HLS 清单地址）。
+ *
+ * 单独导出是给搜索结果页用的：那里要的只是"这张专辑有什么规格"，
+ * 不值得为它拉整张专辑的曲目（见 SEARCH_TRACK_PROBE_LIMIT）。
+ */
+export async function collectionTracks(
+    kind: "albums" | "playlists",
+    id: string,
+    storefrontOverride?: string
+): Promise<Array<{ id: string; enhancedHls?: string }>> {
+    const sf = pickStorefront(storefrontOverride);
+    const raw = await catalogGet(
+        `/v1/catalog/${encodeURIComponent(sf)}/${kind}/${encodeURIComponent(id)}`,
+        { include: "tracks", extend: "extendedAssetUrls" }
+    );
+    const item = ((raw as { data?: RawResource[] } | null)?.data ?? [])[0];
+    const tracks = item?.relationships?.tracks?.data ?? [];
+    return tracks
+        .filter((t) => /^\d+$/.test(t.id ?? ""))
+        .map((t) => ({ id: t.id as string, enhancedHls: enhancedHlsOf(t) }));
 }
 
 /**
@@ -319,11 +367,14 @@ export async function withFormats(
     try {
         if (cap.trackIds.length <= 1) {
             const id = cap.trackIds[0] ?? cap.id;
-            return { ...cap, formats: await songFormatsWithFallback(id, storefrontOverride) };
+            return {
+                ...cap,
+                formats: await formatsFromCatalog(id, cap.trackHls[0], storefrontOverride)
+            };
         }
-        // 专辑/播放列表：逐曲取（并发受限），再合并去重
-        const each = await mapLimit(cap.trackIds, COLLECTION_LIMIT, (id) => songFormats(id));
-        return { ...cap, formats: mergeFormats(each.flat()) };
+        // 专辑/播放列表：逐曲取（并发受限、去重合并）—— 不限首数，用户要的就是这张专辑全貌
+        const tracks = cap.trackIds.map((id, i) => ({ id, enhancedHls: cap.trackHls[i] }));
+        return { ...cap, formats: await collectionFormats(tracks, undefined, storefrontOverride) };
     } catch {
         return cap;
     }
@@ -393,67 +444,41 @@ export async function songFormats(adamId: string): Promise<AudioFormat[]> {
     // 缓存住会让整首歌在这次会话里永远显示"未知"。
     if (!playlist) return [];
 
-    let formats: AudioFormat[] = [];
-    try {
-        const res = await fetch(playlist, { signal: AbortSignal.timeout(15_000) });
-        if (res.ok) formats = parseMasterPlaylist(await res.text());
-    } catch {
-        return [];
-    }
-
-    if (formats.length > 0) {
-        if (formatCache.size >= FORMAT_CACHE_MAX) formatCache.clear();
-        formatCache.set(key, { formats, at: Date.now() });
-    }
-    return formats;
-}
-
-/** 有上限的并发映射 —— 只为保护 NAS，不是性能优化。 */
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-    const out: R[] = new Array(items.length);
-    let cursor = 0;
-    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-        for (;;) {
-            const i = cursor++;
-            if (i >= items.length) return;
-            out[i] = await fn(items[i]!);
-        }
-    });
-    await Promise.all(workers);
-    return out;
-}
-
-const COLLECTION_LIMIT = 4;
-
-/** 专辑/播放列表：逐曲取音质再去重合并（分组合并后才能说"这张有哪些规格"）。 */
-export async function collectionFormats(adamIds: string[]): Promise<AudioFormat[]> {
-    const ids = [...new Set(adamIds.filter((v) => /^\d+$/.test(v)))];
-    if (ids.length === 0) return [];
-    const each = await mapLimit(ids, COLLECTION_LIMIT, (id) => songFormats(id));
-    return mergeFormats(each.flat());
-}
-
-/** 目录兜底：`extendedAssetUrls.enhancedHls`（公开 token 失效时可能拿不到）。 */
-async function catalogMasterPlaylistUrl(adamId: string, storefrontOverride?: string): Promise<string | null> {
-    const sf = pickStorefront(storefrontOverride);
-    const raw = await catalogGet(`/v1/catalog/${encodeURIComponent(sf)}/songs/${encodeURIComponent(adamId)}`, {
-        extend: "extendedAssetUrls"
-    });
-    const item = ((raw as { data?: RawResource[] } | null)?.data ?? [])[0];
-    const attrs = item?.attributes as (RawAttrs & { extendedAssetUrls?: { enhancedHls?: string } }) | undefined;
-    const url = attrs?.extendedAssetUrls?.enhancedHls ?? "";
-    return /^https?:\/\//i.test(url) ? url : null;
+    return remember(key, await fetchFormats(playlist));
 }
 
 /**
- * 单曲音质：wrapper-lite 走不通时退到目录的 enhancedHls。
- * 两条路都失败返回 []（界面显示"未知"），**不猜**。
+ * 音质明细的**首选**取数路径：直接用目录给的 `extendedAssetUrls.enhancedHls`。
+ *
+ * 为什么它比 wrapper 好（实测数据）：
+ *   * wrapper 的 `/m3u8` 每次约 **780 ms**，与并发无关（那是它去 Apple 取清单的固定成本）；
+ *     而直接抓 enhancedHls 只要约 **100 ms**。搜索页要在十几条结果上做这件事，
+ *     差的就是 19 秒与 6 秒。
+ *   * 它不需要 wrapper 在线，也就不占用与 FairPlay 解密共享的那个进程。
+ *
+ * 目录哪里会给 enhancedHls（实测）：**search 结果**、**albums/playlists 的 tracks 关系**。
+ * 不给的地方：`/songs/{id}` 单曲端点 —— 所以单曲链接的解析预览只能退到 wrapper，
+ * 这是本文件里唯一"必须依赖 wrapper"的音质路径。
  */
-export async function songFormatsWithFallback(adamId: string, storefrontOverride?: string): Promise<AudioFormat[]> {
-    const viaWrapper = await songFormats(adamId);
-    if (viaWrapper.length > 0) return viaWrapper;
-    const playlist = await catalogMasterPlaylistUrl(adamId, storefrontOverride).catch(() => null);
-    if (!playlist) return [];
+export async function formatsFromCatalog(
+    adamId: string,
+    enhancedHls: string | undefined,
+    storefrontOverride?: string
+): Promise<AudioFormat[]> {
+    const key = String(adamId);
+    const hit = formatCache.get(key);
+    if (hit && Date.now() - hit.at < FORMAT_TTL_MS) return hit.formats;
+
+    const direct = /^https?:\/\//i.test(enhancedHls ?? "") ? (enhancedHls as string) : null;
+    if (direct) {
+        const formats = await fetchFormats(direct);
+        if (formats.length > 0) return remember(key, formats);
+    }
+    // 目录没给清单：退到 wrapper
+    return songFormatsWithFallback(key, storefrontOverride);
+}
+
+async function fetchFormats(playlist: string): Promise<AudioFormat[]> {
     try {
         const res = await fetch(playlist, { signal: AbortSignal.timeout(15_000) });
         if (!res.ok) return [];
@@ -461,4 +486,59 @@ export async function songFormatsWithFallback(adamId: string, storefrontOverride
     } catch {
         return [];
     }
+}
+
+function remember(key: string, formats: AudioFormat[]): AudioFormat[] {
+    if (formats.length > 0) {
+        if (formatCache.size >= FORMAT_CACHE_MAX) formatCache.clear();
+        formatCache.set(key, { formats, at: Date.now() });
+    }
+    return formats;
+}
+
+/** 有上限的并发映射 —— 见 concurrency.ts 的说明（这一条是保护 NAS 上的 wrapper）。 */
+
+const COLLECTION_LIMIT = 4;
+/**
+ * 首页/搜索页里给「专辑」结果用的探测上限。
+ *
+ * 一张专辑可能有十几首，逐曲探测在**解析预览**里是合理的（用户就是要看这张专辑有什么），
+ * 但搜索结果里一次要处理 12 条结果，探测整张专辑会把页面拖到十几秒。
+ * 取前几首已经足以代表这张专辑的规格（同一张专辑的曲目通常同一档），
+ * 所以搜索路径传这个小值；解析预览路径则不限。
+ */
+export const SEARCH_TRACK_PROBE_LIMIT = 2;
+
+/** 专辑/播放列表：逐曲取音质再去重合并（合并后才能说"这张有哪些规格"）。 */
+export async function collectionFormats(
+    tracks: Array<{ id: string; enhancedHls?: string }>,
+    limit?: number,
+    storefrontOverride?: string
+): Promise<AudioFormat[]> {
+    const seen = new Set<string>();
+    const uniq: Array<{ id: string; enhancedHls?: string }> = [];
+    for (const t of tracks) {
+        if (!/^\d+$/.test(t.id) || seen.has(t.id)) continue;
+        seen.add(t.id);
+        uniq.push(t);
+    }
+    if (uniq.length === 0) return [];
+    const picked = limit !== undefined && limit > 0 ? uniq.slice(0, limit) : uniq;
+    const each = await mapLimit(picked, COLLECTION_LIMIT, (t) =>
+        formatsFromCatalog(t.id, t.enhancedHls, storefrontOverride)
+    );
+    return mergeFormats(each.flat());
+}
+
+/**
+ * 单曲音质的兜底链：目录直接给的 enhancedHls → wrapper-lite。
+ * 两条路都失败返回 []（界面显示"未知"），**不猜**。
+ *
+ * 注意这里没有"按 id 现查目录"的那一条：实测 `/v1/catalog/<sf>/songs/<id>`
+ * 即使带 `extend=extendedAssetUrls` 也**不返回** enhancedHls（只有 search 与
+ * albums/playlists 的 tracks 关系会返回）。写一条永远不会命中的兜底只会让人误以为有保障。
+ */
+export async function songFormatsWithFallback(adamId: string, storefrontOverride?: string): Promise<AudioFormat[]> {
+    void storefrontOverride;
+    return songFormats(adamId);
 }

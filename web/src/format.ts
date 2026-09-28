@@ -294,10 +294,27 @@ export function summarizeFormats(formats: AudioFormat[], max = 3): string {
 
 /* ------------------------------------------------------------------ internals */
 
+/**
+ * 有损码率的归并粒度（kbps）。
+ *
+ * 实测出来的必要性：同一张专辑里各首歌的 AAC 码率**并不完全相同**
+ * （263 / 260 / 259 / 256，HE-AAC 70 / 69），逐位比对会让"同一档音质"重复列出四条。
+ * 按 32 kbps 一档归并既能把它们合成一条，又不会把 256 与 128 混为一谈。
+ * 展示时取该档的**最小值**（256）：那是这张专辑保证能拿到的下限，报平均值反而是虚的。
+ */
+const LOSSY_BITRATE_BUCKET = 32;
+
+function bitrateBucket(kbps: number | undefined): number | "" {
+    if (kbps === undefined) return "";
+    return Math.round(kbps / LOSSY_BITRATE_BUCKET) * LOSSY_BITRATE_BUCKET;
+}
+
 function dedupeFormats(list: AudioFormat[]): AudioFormat[] {
     const seen = new Map<string, AudioFormat>();
     for (const f of list) {
-        const key = [f.codec, f.bitDepth ?? "", f.sampleRate ?? "", f.bitrateKbps ?? ""].join("|");
+        // 无损不参与码率归并（它的码率本来就不展示，且位深+采样率已经唯一确定规格）
+        const bucket = f.lossless ? "" : bitrateBucket(f.bitrateKbps);
+        const key = [f.codec, f.bitDepth ?? "", f.sampleRate ?? "", bucket].join("|");
         const prev = seen.get(key);
         if (!prev) {
             seen.set(key, { ...f });
@@ -305,6 +322,10 @@ function dedupeFormats(list: AudioFormat[]): AudioFormat[] {
         }
         if (f.channels !== undefined && (prev.channels === undefined || f.channels > prev.channels)) {
             prev.channels = f.channels;
+        }
+        // 只减不增：留下的是这一档里最保守（最小）的码率
+        if (f.bitrateKbps !== undefined && (prev.bitrateKbps === undefined || f.bitrateKbps < prev.bitrateKbps)) {
+            prev.bitrateKbps = f.bitrateKbps;
         }
     }
     return [...seen.values()];

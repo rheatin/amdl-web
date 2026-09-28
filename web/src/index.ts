@@ -3,8 +3,21 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { capabilityFor, searchCatalog, ALL_CODECS, songFormats, withFormats, type TrackCapability } from "./ampmusic.js";
-import { codecLabel, describeFormat, formatLabel, type AudioFormat } from "./format.js";
+import {
+    capabilityFor,
+    searchCatalog,
+    ALL_CODECS,
+    songFormats,
+    withFormats,
+    collectionTracks,
+    collectionFormats,
+    formatsFromCatalog,
+    SEARCH_TRACK_PROBE_LIMIT,
+    type TrackCapability
+} from "./ampmusic.js";
+import { presentFormat, type AudioFormatView } from "./audioformat.js";
+import { mapLimit } from "./concurrency.js";
+import type { AudioFormat } from "./format.js";
 import {
     attachUser,
     clearSession,
@@ -64,30 +77,43 @@ app.locals.assetVersion = ((): string => {
  *     取不到就是空数组，视图显示"未取到"，而不是硬写一个 16/44.1。
  *   * 探测失败**不能让搜索页报错** —— 音质是附加信息，目录搜索结果本身才是主功能。
  *   * 只对 `song`/`album` 探测：artist 没有音质可言，music-video 走的是视频轨道。
- *
- * 视图只消费 `formats`（自己挑要显示哪几条），所以这里不预先算摘要串 ——
- * 少一份"和 format.ts 里的措辞可能不一致"的副本。
+ *   * 交给视图的必须是 presentFormat 的**呈现形态**（含 detail/label），
+ *     不是原始 AudioFormat —— 否则 EJS 里取 f.detail 全是空字符串（上线时实测到过）。
+ *   * 曲目**优先用目录直接给的 enhancedHls**（搜索响应里就有，约 100ms），
+ *     不去问 wrapper-lite（每次约 780ms）。这是搜索从 19 秒降到几秒的关键。
+ *   * 仍要限并发并给专辑设首数上限：12 条结果各拉整张专辑的清单，不加约束同样会拖垮页面。
  */
+const SEARCH_PROBE_LIMIT = 3;
+
 async function decorateFormats(
-    items: Array<{ id: string; type: string }>
-): Promise<Array<{ formats: AudioFormat[] }>> {
-    return Promise.all(
-        items.map(async (item) => {
-            if (!/^\d+$/.test(item.id)) return { formats: [] as AudioFormat[] };
-            if (item.type !== "song" && item.type !== "album") return { formats: [] as AudioFormat[] };
-            try {
-                return { formats: await songFormats(item.id) };
-            } catch {
-                return { formats: [] as AudioFormat[] };
+    items: Array<{ id: string; type: string; enhancedHls?: string }>,
+    storefrontOverride?: string
+): Promise<Array<{ formats: AudioFormatView[] }>> {
+    const empty = { formats: [] as AudioFormatView[] };
+    return mapLimit(items, SEARCH_PROBE_LIMIT, async (item) => {
+        if (!/^\d+$/.test(item.id)) return empty;
+        try {
+            if (item.type === "song") {
+                const formats = await formatsFromCatalog(item.id, item.enhancedHls, storefrontOverride);
+                return { formats: formats.map(presentFormat) };
             }
-        })
-    );
+            if (item.type === "album") {
+                const tracks = await collectionTracks("albums", item.id, storefrontOverride);
+                const formats = await collectionFormats(tracks, SEARCH_TRACK_PROBE_LIMIT, storefrontOverride);
+                return { formats: formats.map(presentFormat) };
+            }
+            return empty;
+        } catch {
+            return empty;
+        }
+    });
 }
 
-async function decorateSearchResults<T extends { id: string; type: string }>(
-    results: T[]
-): Promise<Array<T & { formats: AudioFormat[] }>> {
-    const quality = await decorateFormats(results);
+async function decorateSearchResults<T extends { id: string; type: string; enhancedHls?: string }>(
+    results: T[],
+    storefrontOverride?: string
+): Promise<Array<T & { formats: AudioFormatView[] }>> {
+    const quality = await decorateFormats(results, storefrontOverride);
     return results.map((r, i) => ({ ...r, ...(quality[i] ?? { formats: [] }) }));
 }
 
@@ -104,7 +130,10 @@ async function formatsFor(id: string): Promise<AudioFormat[]> {
     }
 }
 
-/** 探测音质的总时限：宁可界面先出来显示"未知"，也不要卡住整个解析预览。 */
+/**
+ * 探测音质的总时限：宁可界面先出来显示"未知"，也不要卡住整个解析预览。
+ * 专辑/播放列表是逐曲探测的，长列表下这个兜底保证预览不会无限期挂着。
+ */
 const FORMAT_PROBE_BUDGET_MS = 20_000;
 
 async function attachFormats(cap: TrackCapability, storefrontOverride?: string): Promise<TrackCapability> {
@@ -116,41 +145,6 @@ async function attachFormats(cap: TrackCapability, storefrontOverride?: string):
     } catch {
         return cap;
     }
-}
-
-/**
- * 给浏览器的音质对象。
- *
- * 标签在**服务端**算好（`label` / `detail` / `kind`），前端只负责摆放 ——
- * 否则「24-bit/96 kHz 该怎么写」这件事会在 TS 与零框架 JS 里各实现一遍，
- * 两边迟早不一致（这个项目已经因为重复实现踩过 parseAppleMusicUrl 的同类坑）。
- */
-function presentFormat(f: AudioFormat): {
-    codec: string;
-    kind: string;
-    bitDepth: number | null;
-    sampleRate: number | null;
-    channels: number | null;
-    bitrateKbps: number | null;
-    lossless: boolean;
-    hiRes: boolean;
-    atmos: boolean;
-    detail: string;
-    label: string;
-} {
-    return {
-        codec: f.codec,
-        kind: codecLabel(f.codec),
-        bitDepth: f.bitDepth ?? null,
-        sampleRate: f.sampleRate ?? null,
-        channels: f.channels ?? null,
-        bitrateKbps: f.bitrateKbps ?? null,
-        lossless: f.lossless,
-        hiRes: f.hiRes,
-        atmos: f.atmos,
-        detail: describeFormat(f),
-        label: formatLabel(f)
-    };
 }
 
 /* ------------------------------------------------------------------ pages */
@@ -216,11 +210,9 @@ app.get("/search", requireAuth, async (req: Request, res: Response) => {
     }
 
     // 每条结果挂上音质明细（位深/采样率/Hi-Res/Atmos）。
-    // 这是本页唯一会"变慢"的地方：最多 12 条结果同时去问 wrapper-lite（每条一次 /m3u8
-    // 加一次抓 playlist，实测约 1 秒），所以首次搜索大约多等一两秒。
-    // 之后同一曲目命中 songFormats 的 10 分钟缓存，重复搜索基本不再打 wrapper。
-    // 只对 song/album 探测，artist 与 music-video 直接空手返回。
-    const withQuality = await decorateSearchResults(results);
+    // 这是本页唯一会"变慢"的地方：并发限 3、专辑只探前 2 首、songFormats 自带 10 分钟缓存。
+    // 首次搜索大约多等几秒，之后同一曲目基本不再打 wrapper。
+    const withQuality = await decorateSearchResults(results, region || undefined);
 
     res.render("search", {
         q,

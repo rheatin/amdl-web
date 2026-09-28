@@ -179,6 +179,35 @@ check("mergeFormats 把同一规格合并、保留最大声道数", () => {
     assert.equal(merged[0].sampleRate, 96000);
 });
 
+check("mergeFormats：专辑里各首歌码率略有差异时仍合成一条（真实回归）", () => {
+    // 实测 JUJU《夏蝉 - EP》逐曲探测的结果：同一档 AAC 的码率是 263/260/259/256，
+    // 逐位比对会把"同一档音质"重复列四条 —— 这正是上线后第一眼看到的问题。
+    const aac = (kbps) => ({ codec: "aac", bitrateKbps: kbps, channels: 2, lossless: false, hiRes: false, atmos: false });
+    const merged = mergeFormats([aac(263), aac(260), aac(259), aac(256)]);
+    assert.equal(merged.length, 1, `应合成一条，实际 ${merged.length} 条`);
+    assert.equal(merged[0].bitrateKbps, 256, "取该档最小值（保证能拿到的下限）");
+});
+
+check("mergeFormats：不同档位不能被码率归并吞掉（256 与 128 要分开）", () => {
+    const aac = (kbps) => ({ codec: "aac", bitrateKbps: kbps, channels: 2, lossless: false, hiRes: false, atmos: false });
+    const merged = mergeFormats([aac(263), aac(134), aac(132), aac(129)]);
+    assert.equal(merged.length, 2, `256 档与 128 档应各一条，实际 ${merged.length}`);
+    assert.deepEqual(
+        merged.map((f) => f.bitrateKbps).sort((a, b) => b - a),
+        [263, 129].sort((a, b) => b - a)
+    );
+});
+
+check("mergeFormats：无损不因码率差异被拆开（ALAC 的码率是清单估算值）", () => {
+    const alac = (kbps) => ({
+        codec: "alac", bitDepth: 24, sampleRate: 96000, channels: 2, bitrateKbps: kbps,
+        lossless: true, hiRes: true, atmos: false
+    });
+    const merged = mergeFormats([alac(3712), alac(3800), alac(3650)]);
+    assert.equal(merged.length, 1, "同为 24/96 的 ALAC 应合成一条");
+    assert.equal(merged[0].hiRes, true);
+});
+
 /* --------------------------------------------------------------- 展示串 */
 
 check("kHz：整数不留小数，44100 显示为 44.1", () => {
