@@ -16,6 +16,30 @@ async function postJson(url, body) {
     return data;
 }
 
+async function delJson(url) {
+    const res = await fetch(url, { method: "DELETE" });
+    let data = null;
+    try {
+        data = await res.json();
+    } catch {
+        /* empty body */
+    }
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    return data;
+}
+
+/**
+ * 任务页的整页刷新只做一次。
+ * 「取消」的回调与 SSE 的终态事件都会想刷新页面去换成「重试/删除」，
+ * 两边各刷一次会白闪一下（甚至把 toast 冲掉）。
+ */
+let pageReloading = false;
+function reloadJobsPage(delay) {
+    if (pageReloading) return;
+    pageReloading = true;
+    setTimeout(() => location.reload(), delay || 0);
+}
+
 function toast(msg) {
     const el = document.getElementById("toast") || document.getElementById("search-msg") || document.getElementById("job-form-msg");
     if (!el) return;
@@ -317,25 +341,30 @@ if (jobForm) {
 }
 
 /* ---- 搜索页：一键下载（带着当前搜索的商店一起建任务）---- */
-document.querySelectorAll("button.dl").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-        const url = btn.getAttribute("data-url");
-        const codec = btn.getAttribute("data-codec") || "alac";
-        const region = (btn.getAttribute("data-region") || "").trim();
-        btn.disabled = true;
-        try {
-            const body = { url, codec };
-            // 结果链接本来就带该商店的地区段，服务端会判定「与链接一致」——
-            // 带 region 只是把用户的意图一并记录下来（含自动匹配的判定依据）。
-            if (region) body.region = region;
-            const { job } = await postJson("/api/jobs", body);
-            toast(`已创建任务 #${job.id}（${codec}${region ? " · " + region : ""}），正在跳转…`);
-            setTimeout(() => { window.location.href = `/jobs?job=${job.id}`; }, 700);
-        } catch (err) {
-            btn.disabled = false;
-            toast(`创建失败：${err.message}`);
-        }
-    });
+/*
+ * 用**事件委托**而不是 querySelectorAll 逐个绑定：搜索结果现在是流式逐条插进 DOM 的
+ * （见 search.js），页面加载那一刻这些按钮还不存在，直接绑定会漏掉全部结果。
+ */
+document.addEventListener("click", async (ev) => {
+    const target = ev.target instanceof Element ? ev.target : null;
+    const btn = target ? target.closest("button.dl") : null;
+    if (!btn || btn.disabled) return;
+    const url = btn.getAttribute("data-url");
+    const codec = btn.getAttribute("data-codec") || "alac";
+    const region = (btn.getAttribute("data-region") || "").trim();
+    btn.disabled = true;
+    try {
+        const body = { url, codec };
+        // 结果链接本来就带该商店的地区段，服务端会判定「与链接一致」——
+        // 带 region 只是把用户的意图一并记录下来（含自动匹配的判定依据）。
+        if (region) body.region = region;
+        const { job } = await postJson("/api/jobs", body);
+        toast(`已创建任务 #${job.id}（${codec}${region ? " · " + region : ""}），正在跳转…`);
+        setTimeout(() => { window.location.href = `/jobs?job=${job.id}`; }, 700);
+    } catch (err) {
+        btn.disabled = false;
+        toast(`创建失败：${err.message}`);
+    }
 });
 
 /* ---- 登录页首次运行：创建管理员 ---- */
@@ -386,7 +415,7 @@ if (tfaForm) {
     });
 }
 
-/* ---- 任务页：重试按钮 ---- */
+/* ---- 任务页：重试 / 取消 / 删除 / 清空已结束 ---- */
 const retryBtn = document.querySelector("[data-retry]");
 if (retryBtn) {
     retryBtn.addEventListener("click", async () => {
@@ -405,6 +434,64 @@ if (retryBtn) {
         }
     });
 }
+
+/**
+ * 取消 / 删除 / 清空已结束 —— 一律走 document 上的事件委托。
+ *
+ * 任务列表里每一行都可能带一个按钮，而且服务端会按状态决定给「取消」还是「删除」；
+ * 逐个 querySelector 绑定既啰嗦又容易漏（搜索页的下载按钮就吃过这个亏）。
+ * 三个动作都用 confirm 二次确认：删除与清空是不可逆的记录操作。
+ */
+document.addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("[data-cancel], [data-del], [data-clear-finished]");
+    if (!btn) return;
+
+    const cancelId = btn.getAttribute("data-cancel");
+    const delId = btn.getAttribute("data-del");
+
+    if (cancelId) {
+        if (!confirm(`取消任务 #${cancelId}？已经下载好的文件会保留。`)) return;
+        btn.disabled = true;
+        try {
+            await postJson(`/api/jobs/${cancelId}/cancel`, {});
+            toast(`任务 #${cancelId} 已取消`);
+            reloadJobsPage(500);
+        } catch (err) {
+            btn.disabled = false;
+            toast(`取消失败：${err.message}`);
+        }
+        return;
+    }
+
+    if (delId) {
+        if (!confirm(`删除任务 #${delId} 的记录？（音乐库里已下载的文件不会被删）`)) return;
+        btn.disabled = true;
+        try {
+            await delJson(`/api/jobs/${delId}`);
+            toast(`任务 #${delId} 的记录已删除`);
+            setTimeout(() => {
+                location.href = "/jobs";
+            }, 400);
+        } catch (err) {
+            btn.disabled = false;
+            toast(`删除失败：${err.message}`);
+        }
+        return;
+    }
+
+    if (!confirm("清空所有已结束（完成 / 部分完成 / 失败 / 已取消）的任务记录？音乐库里的文件不会被删。")) return;
+    btn.disabled = true;
+    try {
+        const data = await postJson("/api/jobs/clear-finished", {});
+        toast(`已清空 ${data && typeof data.removed === "number" ? data.removed : ""} 条任务记录`);
+        setTimeout(() => {
+            location.href = "/jobs";
+        }, 400);
+    } catch (err) {
+        btn.disabled = false;
+        toast(`清空失败：${err.message}`);
+    }
+});
 
 /* ---- 任务页：实时控制台 + 状态徽章 ---- */
 const consoleEl = document.getElementById("console");
@@ -453,14 +540,29 @@ if (consoleEl) {
     const setError = (msg) => {
         if (!errorEl || !msg) return;
         errorEl.textContent = msg;
-        errorEl.className = msg.startsWith("部分完成") ? "warn" : "err";
+        // 「部分完成」和「已取消」都不是故障，别用报错的红色（取消时还可能带着已落盘首数）
+        errorEl.className = msg.startsWith("部分完成") || msg.startsWith("已取消") ? "warn" : "err";
         errorEl.hidden = false;
     };
 
     const source = new EventSource(`/api/jobs/${jobId}/events`);
-    // 终态是三个：done / partial / failed。早先漏了 partial，
-    // 于是「部分完成」的任务控制台不会收尾（徽章也不会刷新）。
-    const isTerminal = (s) => s === "done" || s === "partial" || s === "failed";
+    /**
+     * 终态四个：done / partial / failed / cancelled。
+     * 早先漏了 partial，于是「部分完成」的任务控制台不会收尾（徽章也不刷新）；
+     * 后来又加了 cancelled（用户取消），同样得算终态，否则徽章会一直转。
+     */
+    const isTerminal = (s) => s === "done" || s === "partial" || s === "failed" || s === "cancelled";
+    /**
+     * 页面是带着「取消」按钮渲染出来的（= 任务当时还活着）。
+     * 任务一旦收尾，详情区该换成「重试 / 删除」——那两行 HTML 是服务端按状态渲染的，
+     * 所以这里只能整页刷新一次，不能就地拼。
+     */
+    const actionsWereActive = Boolean(document.querySelector("[data-cancel]"));
+    const settle = (status) => {
+        source.close();
+        refreshBadges();
+        if (actionsWereActive) reloadJobsPage(700);
+    };
     source.onmessage = (ev) => {
         let data;
         try {
@@ -478,10 +580,7 @@ if (consoleEl) {
                 setBadge(data.job.status);
                 if (countEl && data.job.tracks) countEl.textContent = String(data.job.tracks.length);
                 setError(data.job.error);
-                if (isTerminal(data.job.status)) {
-                    source.close();
-                    refreshBadges();
-                }
+                if (isTerminal(data.job.status)) settle(data.job.status);
             }
             return;
         }
@@ -495,10 +594,7 @@ if (consoleEl) {
             setBadge(data.status);
             if (countEl && typeof data.tracks === "number") countEl.textContent = String(data.tracks);
             setError(data.error);
-            if (isTerminal(data.status)) {
-                source.close();
-                refreshBadges();
-            }
+            if (isTerminal(data.status)) settle(data.status);
         }
     };
     source.onerror = () => {

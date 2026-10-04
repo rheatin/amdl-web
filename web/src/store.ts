@@ -12,9 +12,17 @@ export type Track = {
 
 /**
  * queued → running → 终态。
- * 终态三选一：done（全部成功）、partial（有曲目失败但确实落盘了文件）、failed（什么都没出来）。
+ * 终态四选一：done（全部成功）、partial（有曲目失败但确实落盘了文件）、failed（什么都没出来）、
+ * cancelled（用户主动取消；已经落盘的文件保留，跟 partial 的区别是「没下完是用户的意思」）。
  */
-export type JobStatus = "queued" | "running" | "done" | "partial" | "failed";
+export type JobStatus = "queued" | "running" | "done" | "partial" | "failed" | "cancelled";
+
+/** 终态（不会再到别的状态去）——取消/清空/重试都以它为准，别再各处手写状态列表。 */
+export const FINISHED_STATUSES: JobStatus[] = ["done", "partial", "failed", "cancelled"];
+
+export function isFinished(status: JobStatus): boolean {
+    return FINISHED_STATUSES.includes(status);
+}
 
 /**
  * 每个任务的下载选项 —— 会以「按任务覆盖 config.yaml」的方式传给引擎
@@ -208,6 +216,27 @@ export const store = {
             job.log.splice(0, job.log.length - config.logLines);
         }
         // Log lines are high-frequency; persistence happens on status changes.
+    },
+    /**
+     * 真的把任务记录删掉（不是改状态）。
+     *
+     * 调用方负责先确认它不在跑：`queue.cancelJob` 之后 `execute()` 仍会对同一个 id
+     * 调 updateJob/appendLog，那些都是 no-op（job 已经查不到），不会把记录写回来。
+     */
+    deleteJob(id: number): Job | undefined {
+        const i = db.jobs.findIndex((j) => j.id === id);
+        if (i < 0) return undefined;
+        const [job] = db.jobs.splice(i, 1);
+        persist();
+        return job;
+    },
+    /** 批量删除已结束（done/partial/failed/cancelled）的任务记录，返回删掉的数量。 */
+    deleteFinished(): number {
+        const before = db.jobs.length;
+        db.jobs = db.jobs.filter((j) => !isFinished(j.status));
+        const removed = before - db.jobs.length;
+        if (removed > 0) persist();
+        return removed;
     },
     flush(): void {
         persist();

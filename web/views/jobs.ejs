@@ -2,7 +2,17 @@
 
 <section class="grid two">
     <div class="card">
-        <h2>任务列表</h2>
+        <%
+        // 终态 = done / partial / failed / cancelled；queued 与 running 还活着。
+        // 这份统计只用于「清空已结束」按钮要不要出现、以及显示会清掉几条。
+        const finished = jobs.filter(function (j) { return j.status !== 'queued' && j.status !== 'running'; });
+        %>
+        <div class="head-row">
+            <h2>任务列表</h2>
+            <% if (finished.length > 0) { %>
+                <button class="ghost" type="button" data-clear-finished>清空已结束（<%= finished.length %>）</button>
+            <% } %>
+        </div>
         <p class="muted">进行中 <b><%= queue.running %></b> · 等待 <b><%= queue.pending %></b></p>
         <% if (jobs.length === 0) { %>
             <p class="muted">还没有任务，去<a href="/">新建一个</a>。</p>
@@ -18,6 +28,11 @@
                     <% } %>
                     <% if (j.region && j.region.fallback) { %><span class="warn small" title="<%= j.region.note %>">已回退</span><% } %>
                     <span class="ellipsis"><%= j.url %></span>
+                    <% if (j.status === 'queued' || j.status === 'running') { %>
+                        <button class="ghost tiny" type="button" data-cancel="<%= j.id %>" title="取消这个任务">取消</button>
+                    <% } else { %>
+                        <button class="icon-btn" type="button" data-del="<%= j.id %>" title="删除这条任务记录（不动已下载的文件）" aria-label="删除任务记录 <%= j.id %>">×</button>
+                    <% } %>
                 </li>
             <% }); %>
             </ul>
@@ -36,10 +51,21 @@
                 <% if (selected.startedAt) { %> · 开始 <%= new Date(selected.startedAt).toLocaleString() %><% } %>
                 <% if (selected.finishedAt) { %> · 结束 <%= new Date(selected.finishedAt).toLocaleString() %><% } %>
             </p>
-            <% if (selected.error) { %><p class="<%= selected.status === 'partial' ? 'warn' : 'err' %>" id="job-error"><%= selected.error %></p><% } else { %><p class="err" id="job-error" hidden></p><% } %>
-            <p class="row">
-                <button class="ghost" type="button" data-retry="<%= selected.id %>">重试这个任务</button>
-                <span class="muted small">已下载的曲目会被引擎跳过，只补失败的那几首；地区沿用本任务的记录，不重新探测</span>
+            <% if (selected.error) { %><p class="<%= (selected.status === 'partial' || selected.status === 'cancelled') ? 'warn' : 'err' %>" id="job-error"><%= selected.error %></p><% } else { %><p class="err" id="job-error" hidden></p><% } %>
+            <%
+            // 活着的时候只给「取消」，结束之后才给「重试 / 删除」——
+            // 后端对活任务的重试与删除都是 409，摆出来只会让人点了才挨骂。
+            const active = selected.status === 'queued' || selected.status === 'running';
+            %>
+            <p class="row" id="job-actions">
+                <% if (active) { %>
+                    <button class="ghost" type="button" data-cancel="<%= selected.id %>">取消任务</button>
+                    <span class="muted small">取消会立刻终止引擎进程，已经下载好的文件保留在原处</span>
+                <% } else { %>
+                    <button class="ghost" type="button" data-retry="<%= selected.id %>">重试这个任务</button>
+                    <button class="ghost danger" type="button" data-del="<%= selected.id %>">删除记录</button>
+                    <span class="muted small">重试时已下载的曲目会被引擎跳过，只补失败的那几首；地区沿用本任务的记录，不重新探测</span>
+                <% } %>
             </p>
             <% if (selected.region) { %>
                 <%

@@ -40,15 +40,17 @@ import {
 } from "./auth.js";
 import { config, language, storefront } from "./config.js";
 import { explicitJobOptions } from "./jobopts.js";
-import { enqueue, queueDepth, reconcileOnBoot, subscribe } from "./queue.js";
+import { cancelJob, enqueue, isActive, queueDepth, reconcileOnBoot, subscribe } from "./queue.js";
 import { resolveRegionPlan, regionLabel, type RegionDeps, type RegionPlan } from "./region.js";
-import { engineConfigPath } from "./ripper.js";
+import { engineConfigPath, removeJobConfigDir } from "./ripper.js";
 import { lyricOptionsFromConfig, maskConfigText, SECRET_KEYS, tryLoadEngineConfig } from "./engineconf.js";
 import { store } from "./store.js";
 import { normalizeRegion, parseAppleMusicUrl } from "./urlinfo.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+/** 导出给测试用（test/search-stream.test.mjs 自己 listen 到一个随机端口）。 */
+export { app };
 
 app.set("view engine", "ejs");
 app.set("views", path.join(here, "..", "views"));
@@ -66,11 +68,19 @@ app.use((req: Request, res: Response, next) => {
 
 // 静态资源版本号：内容一变就变 —— 否则浏览器会继续用缓存里的旧 app.js
 // （曾导致「新功能已部署但界面上看不到」）。模板里以 ?v= 引用。
+//
+// 把 public/ 下**所有**文件都算进去，而不是写死 ["app.js","app.css"]：
+// 漏掉一个文件名就等于「改了它但版本号不变」——search.js 就正好踩过这个坑。
+// 文件名也参与哈希，这样增删文件同样会推动版本号。
 app.locals.assetVersion = ((): string => {
     try {
+        const dir = path.join(here, "..", "public");
         const h = crypto.createHash("sha1");
-        for (const f of ["app.js", "app.css"]) {
-            h.update(fs.readFileSync(path.join(here, "..", "public", f)));
+        for (const f of fs.readdirSync(dir).sort()) {
+            const abs = path.join(dir, f);
+            if (!fs.statSync(abs).isFile()) continue;
+            h.update(f);
+            h.update(fs.readFileSync(abs));
         }
         return h.digest("hex").slice(0, 8);
     } catch {
@@ -159,6 +169,183 @@ async function attachFormats(cap: TrackCapability, storefrontOverride?: string):
     }
 }
 
+/* ------------------------------------------------------------ 流式搜索结果 */
+
+/**
+ * 渲染一个 EJS 片段（partial）为字符串。
+ *
+ * 为什么要 `res.render` 的路径而不是另一套模板引擎：流式接口必须产出与搜索页**同一种**
+ * 标记（见 views/partials/result-item.ejs 的注释）。用别的渲染方式就等于把「一行结果长什么样」
+ * 抄第二遍，改一处漏一处。
+ */
+function renderPartial(res: Response, name: string, locals: Record<string, unknown>): Promise<string> {
+    return new Promise((resolve, reject) => {
+        res.render(name, { ...locals, config }, (err: Error | null, html?: string) => {
+            if (err) reject(err);
+            else resolve(html ?? "");
+        });
+    });
+}
+
+/**
+ * 把搜索结果**流式**推给浏览器（NDJSON，一行一个事件）。
+ *
+ * 用户的原始抱怨是「没有任何状态显示，按钮也没有灰，一定是请求完才显示结果」——
+ * 根因是搜索页把目录搜索（约 3 秒）与 12 条结果的音质探测（每条 0.78 秒、并发上限 3，
+ * 实测十几秒）串在一次服务端渲染里，期间浏览器只能盯着上一页。
+ *
+ * 于是拆成两个阶段，阶段之间**不再有整体等待**：
+ *   * 阶段一 `meta` → `total` → 逐条 `card`（目录搜索一回来就发，界面立刻有东西）
+ *   * 阶段二 逐条 `fill`（探测完一条回填一条：用 3 个 worker 抢队列，谁先回来谁先发）
+ *
+ * 记号：`card` 里 song/album 的音质区渲染成骨架（`data-fill-id`），`fill` 事件把骨架换掉。
+ * 之所以要 `pendingFill` 兜底：`card` 与它的 `fill` 可能落在同一个 TCP 分片里，
+ * 浏览器若先读到 fill，`[data-fill-id="…"]` 还不存在 —— 丢掉就等于这一条永远是骨架。
+ *
+ * 客户端断开（用户按了 Esc、关了标签）时写会抛错，这里一律当成"提前收工"，
+ * 不再继续探测后面的条目 —— 没人在等的 wrapper 请求不该继续占用 NAS。
+ */
+async function streamSearchResults(req: Request, res: Response, q: string, region: string): Promise<void> {
+    res.writeHead(200, {
+        "content-type": "application/x-ndjson; charset=utf-8",
+        "cache-control": "no-store, no-transform",
+        // 反向代理/隧道不要缓冲：x-accel-buffering 给 nginx，no-transform 给中间层
+        "x-accel-buffering": "no",
+        connection: "keep-alive"
+    });
+    let alive = true;
+    const write = (obj: unknown): boolean => {
+        if (!alive) return false;
+        try {
+            res.write(`${JSON.stringify(obj)}\n`);
+            return true;
+        } catch {
+            alive = false;
+            return false;
+        }
+    };
+    const end = (): void => {
+        if (!alive) return;
+        alive = false;
+        try {
+            res.end();
+        } catch {
+            /* 连接已经没了 */
+        }
+    };
+    const onClose = (): void => {
+        alive = false;
+    };
+    req.on("close", onClose);
+
+    // 心跳：目录搜索阶段可能几秒没有任何字节，代理与浏览器都更容易把这种连接当死连接。
+    // 注释行不是合法 JSON，客户端会直接忽略 —— 与 jobs 的 SSE 用同一套约定。
+    const beat = setInterval(() => {
+        if (!alive || res.writableEnded) {
+            alive = false;
+            return;
+        }
+        try {
+            res.write(": ping\n\n");
+        } catch {
+            alive = false;
+        }
+    }, 15_000);
+
+    // 客户端还没走到对应 card 的 fill（见上面的分片说明）
+    const pendingFill = new Map<string, string>();
+
+    try {
+        write({ t: "meta", q, region: region || "", regionName: regionLabel(region || storefront()) });
+
+        let items: Awaited<ReturnType<typeof searchCatalog>> = [];
+        try {
+            items = await searchCatalog(q, SEARCH_TYPES, 12, region || undefined);
+        } catch (err) {
+            write({ type: "error", message: err instanceof Error ? err.message : String(err) });
+            return;
+        }
+        if (!alive) return;
+        write({ type: "total", total: items.length });
+
+        const fillHtml = async (r: (typeof items)[number], formats: AudioFormatView[]): Promise<string> =>
+            renderPartial(res, "partials/result-item", {
+                r: { ...r, formats },
+                region,
+                formatsFill: false
+            });
+
+        // 阶段一：目录结果先全部落地（骨架），顺序与目录返回一致
+        for (const r of items) {
+            if (!alive) return;
+            let html = "";
+            try {
+                html = await renderPartial(res, "partials/result-item", { r, region, formatsFill: true });
+            } catch {
+                html = "";
+            }
+            if (!alive) return;
+            if (html) write({ t: "card", id: String(r.id), html });
+            const ready = pendingFill.get(String(r.id));
+            if (ready) {
+                pendingFill.delete(String(r.id));
+                write({ t: "fill", id: String(r.id), html: ready });
+            }
+        }
+
+        // 阶段二：只对 song/album 探测（artist 没有音质，MV 走视频轨道）。
+        // 用 3 个消费者抢同一条队列，而不是 mapLimit —— 后者要等整批跑完才返回，
+        // 又会变回"最后一条决定一切"。并发上限的用意见 concurrency.ts（保护同一台 NAS 上的 wrapper）。
+        const queue = items
+            .map((r, i) => ({ r, i }))
+            .filter(({ r }) => r.type === "song" || r.type === "album");
+        let cursor = 0;
+        const workers = Array.from({ length: Math.min(SEARCH_PROBE_LIMIT, queue.length) }, async () => {
+            for (;;) {
+                if (!alive) return;
+                const idx = cursor++;
+                if (idx >= queue.length) return;
+                const { r } = queue[idx]!;
+                if (!/^\d+$/.test(r.id)) continue;
+                let formats: AudioFormatView[] = [];
+                try {
+                    const one = await decorateFormats([{ id: r.id, type: r.type, enhancedHls: r.enhancedHls }], region || undefined);
+                    formats = one[0]?.formats ?? [];
+                } catch {
+                    formats = [];
+                }
+                if (!alive) return;
+                let html: string;
+                try {
+                    html = await fillHtml(r, formats);
+                } catch {
+                    continue;
+                }
+                if (!alive) return;
+                if (!write({ t: "fill", id: String(r.id), html })) pendingFill.set(String(r.id), html);
+            }
+        });
+        await Promise.all(workers);
+        if (!alive) return;
+        write({ t: "done" });
+    } finally {
+        clearInterval(beat);
+        req.off("close", onClose);
+        end();
+    }
+}
+
+/** 搜索结果的流式接口：搜索页在有 JS 时走这条；没有 JS 仍是 /search 的服务端渲染。 */
+app.get("/search/results/stream", requireAuth, async (req: Request, res: Response) => {
+    const q = String(req.query["q"] ?? "").trim();
+    const region = normalizeRegion(req.query["region"]) ?? "";
+    if (!q) {
+        res.status(400).json({ error: "missing q" });
+        return;
+    }
+    await streamSearchResults(req, res, q, region);
+});
+
 /* ------------------------------------------------------------------ pages */
 
 app.get("/login", (req: Request, res: Response) => {
@@ -226,7 +413,13 @@ app.get("/search", requireAuth, async (req: Request, res: Response) => {
     // 每条结果挂上音质明细（位深/采样率/Hi-Res/Atmos）。
     // 这是本页唯一会"变慢"的地方：并发限 3、专辑只探前 2 首、songFormats 自带 10 分钟缓存。
     // 首次搜索大约多等几秒，之后同一曲目基本不再打 wrapper。
-    const withQuality = await decorateSearchResults(results, region || undefined);
+    //
+    // `stream=1` 表示"客户端会自己去 /search/results/stream 取"（见 public/search.js），
+    // 这条路径必须立刻返回：否则用户还是要等这十几秒才看得到页面，等于白做流式。
+    // 代价是这一次渲染没有结果 —— 客户端在首帧之后马上把流接上，观感上就是"先出页面，再出结果"。
+    // 没有 JS 的客户端不带这个参数，走的仍是原来那套完整服务端渲染。
+    const streaming = req.query["stream"] === "1";
+    const withQuality = streaming ? results : await decorateSearchResults(results, region || undefined);
 
     res.render("search", {
         q,
@@ -626,6 +819,24 @@ app.post("/api/jobs/:id/retry", requireAuth, (req: Request, res: Response) => {
     res.status(201).json({ job });
 });
 
+/**
+ * 取消任务：排队中的直接摘掉，运行中的 SIGKILL 掉引擎（见 queue.cancelJob）。
+ * 已经结束的任务返回 409 —— 前端只在 queued/running 时显示这个按钮。
+ */
+app.post("/api/jobs/:id/cancel", requireAuth, (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    const job = store.job(id);
+    if (!job) {
+        res.status(404).json({ error: "no such job" });
+        return;
+    }
+    if (!cancelJob(id)) {
+        res.status(409).json({ error: `job is already ${job.status}` });
+        return;
+    }
+    res.json({ ok: true, job: store.job(id) });
+});
+
 app.delete("/api/jobs/:id", requireAuth, (req: Request, res: Response) => {
     const id = Number(req.params.id);
     const job = store.job(id);
@@ -633,13 +844,27 @@ app.delete("/api/jobs/:id", requireAuth, (req: Request, res: Response) => {
         res.status(404).json({ error: "no such job" });
         return;
     }
-    if (job.status === "running" || job.status === "queued") {
-        res.status(409).json({ error: "job is still active" });
+    /**
+     * 运行中/排队中的**不能直接删**：execute() 收尾时还会对同一个 id 落库，
+     * 记录会「删了又回来」一半；而且用户真正想干的多半是先停下。
+     * 前端在这两个状态下给的是「取消」按钮，所以这条 409 正常用不到。
+     */
+    if (isActive(id)) {
+        res.status(409).json({ error: "job is still active — cancel it first" });
         return;
     }
-    job.status = "failed";
-    store.flush();
+    store.deleteJob(id);
+    removeJobConfigDir(id);
     res.json({ ok: true });
+});
+
+/**
+ * 批量清空已结束的任务（done/partial/failed/cancelled）。
+ * 只动任务记录：音乐库里的文件一个都不碰。
+ */
+app.post("/api/jobs/clear-finished", requireAuth, (_req: Request, res: Response) => {
+    const removed = store.deleteFinished();
+    res.json({ ok: true, removed });
 });
 
 /** Server-sent events: live engine output for one job. */
@@ -693,11 +918,21 @@ app.get("/api/jobs/:id/events", requireAuth, (req: Request, res: Response) => {
 seedAdmin();
 reconcileOnBoot();
 
-app.listen(config.port, () => {
-    console.log(`[amdl-web] listening on http://0.0.0.0:${config.port}`);
-    console.log(`[amdl-web] engine=${config.engineBin} cwd=${config.engineDir} lite=${config.liteServer}`);
-    console.log(`[amdl-web] music=${config.musicDir} data=${config.dataDir}`);
-    if (store.users().length === 0) {
-        console.log("[amdl-web] no users yet — open /login to create the first admin account");
-    }
-});
+/**
+ * 监听交给「被 import 的模块」自己做。
+ *
+ * 测试（test/search-stream.test.mjs）需要**真实**的 Express 应用：路由、中间件、
+ * res.render 的 views 查找都一样，只有端口不同。早期版本的条件是
+ * `if (!config.dataDir.startsWith(os.tmpdir()))` —— 依赖临时目录名这种脆弱前提，
+ * 现在换成显式开关，谁想接管监听谁自己声明。
+ */
+if (!process.env.AMDL_NO_LISTEN) {
+    app.listen(config.port, () => {
+        console.log(`[amdl-web] listening on http://0.0.0.0:${config.port}`);
+        console.log(`[amdl-web] engine=${config.engineBin} cwd=${config.engineDir} lite=${config.liteServer}`);
+        console.log(`[amdl-web] music=${config.musicDir} data=${config.dataDir}`);
+        if (store.users().length === 0) {
+            console.log("[amdl-web] no users yet — open /login to create the first admin account");
+        }
+    });
+}

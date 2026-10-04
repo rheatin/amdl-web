@@ -1,0 +1,28 @@
+<%#
+  搜索结果区 —— 搜索页首屏（含离线降级）与流式接口共用。
+
+  两条纪律：
+    1. 列表本身在**没有结果时也要渲染**。流式客户端要把逐条推来的 <li> 追加进
+       `[data-results-list]`，如果服务端因为"这次没有结果"就不渲染这个容器，
+       浏览器端只能在响应回来后再造一个空 <ul>，布局就会闪一下。所以容器常驻，
+       空态交给 `#search-empty` 这段文案。
+    2. 计数与状态行放在同一行：它既是「结果（N）」这个标题，也是流式进度
+       （已找到 · 正在补全音质 · 完成）的落点，避免多出一行只在某一瞬间有意义的文字。
+%>
+<section class="card" data-results data-stream-state="<%= q && !error ? "loading" : "idle" %>">
+    <h2 class="results-head"><span data-result-count>结果<%= (typeof results !== "undefined" && results && results.length > 0) ? `（${results.length}）` : "" %></span><span id="search-state" class="search-state muted small" aria-live="polite"></span></h2>
+    <% if (error) { %>
+        <p class="err">搜索失败：<%= error %></p>
+    <% } else if (!q) { %>
+        <p class="muted">输入关键词开始搜索。可以搜歌名、歌手、专辑名，也可以直接粘贴 Apple Music 链接。</p>
+    <% } else { %>
+        <p id="search-empty" class="muted"<% if (results && results.length > 0) { %> hidden<% } %>>没有找到「<%= q %>」的结果。换关键词或换一下商店地区试试（Apple 的目录按地区分开）。</p>
+        <ul class="results" data-results-list>
+            <% if (results && results.length > 0) { %>
+                <% results.forEach(function (r) { %>
+                    <%- include("result-item", { r: r, region: region, formatsFill: false }) %>
+                <% }) %>
+            <% } %>
+        </ul>
+    <% } %>
+</section>

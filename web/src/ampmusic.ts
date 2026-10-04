@@ -513,6 +513,17 @@ function remember(key: string, formats: AudioFormat[]): AudioFormat[] {
     return formats;
 }
 
+/**
+ * 清空音质缓存。
+ *
+ * 生产代码不用它 —— 缓存本来就是 TTL 自愈的。存在的理由只有一个：测试要在同一个进程里
+ * 分别验证「wrapper 掉线走目录兜底」和「wrapper 正常优先用它」两条路径，而兜底结果也会进缓存
+ * （见 remember），不清就会把后一条路径喂成前一条的结果。
+ */
+export function clearFormatCache(): void {
+    formatCache.clear();
+}
+
 /** 有上限的并发映射 —— 见 concurrency.ts 的说明（这一条是保护 NAS 上的 wrapper）。 */
 
 const COLLECTION_LIMIT = 4;

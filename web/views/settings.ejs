@@ -90,7 +90,8 @@
         <dl class="kv">
             <% secrets.forEach(function (s) { %>
                 <dt><code><%= s.key %></code></dt>
-                <dd><%= s.set ? '<span class="badge done">已配置</span>' : '<span class="badge failed">未配置</span>' %></dd>
+                <%# 这里必须用不转义的输出标签：注入的是下面这两个固定串，用转义标签会把标记本身当文本显示 %>
+                <dd><%- s.set ? '<span class="badge done">已配置</span>' : '<span class="badge failed">未配置</span>' %></dd>
             <% }); %>
         </dl>
         <pre class="code" id="engine-config"><%= engineText %></pre>

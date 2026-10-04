@@ -1,0 +1,78 @@
+<%#
+  一条搜索结果，单独成模板块。
+
+  为什么拆出来：搜索页原先整块写死在 search.ejs 里，而流式接口要**逐条**把结果推给
+  浏览器（10 秒的探测不该让用户盯着空白页）。如果两处各写一份标记，改动时必然漂移
+  —— 见 urlinfo.ts 里记录过的同类教训。搜索页首屏、流式卡片、离线降级三条路径
+  全部走这一个模板。
+
+  局部变量：
+    r            —— 搜索结果（可带 formats 呈现形态）
+    region       —— 当前商店，写进下载按钮的 data-region
+    formatsFill  —— true 时把音质芯片区渲染成骨架，等 /search/results/stream 回填
+
+  骨架为什么要占位而不是留空：用户的抱怨正是"什么提示都没有"。骨架让「已找到 12 首、
+  音质还在取」这件事当场可见；等真正取到（歌曲约 1 秒一条，专辑更久），芯片替换进来，
+  没有布局跳动，也不需要编一句"正在探测音频规格…"的文案。
+%>
+<li class="result">
+    <% if (r.artwork) { %>
+        <img src="<%= r.artwork %>" alt="" loading="lazy" width="52" height="52">
+    <% } else { %>
+        <span class="art-ph" aria-hidden="true"></span>
+    <% } %>
+    <div class="meta">
+        <div class="title"><%= r.name %></div>
+        <div class="muted small">
+            <%= r.type %> · <%= r.artistName %><% if (r.albumName) { %> · <%= r.albumName %><% } %><% if (r.trackCount) { %> · <%= r.trackCount %> 首<% } %>
+        </div>
+        <% if (r.type === "music-video") { %>
+            <div class="result-quality"><span class="q-chip atmos">MV · 视频 + 音轨</span></div>
+        <% } else if (formatsFill && (r.type === "song" || r.type === "album")) { %>
+            <div class="result-quality" data-fill-id="<%= r.id %>" data-fill-state="pending" aria-busy="true" title="正在取音质明细…">
+                <span class="sk-chip"></span><span class="sk-chip"></span>
+            </div>
+        <% } else if (r.formats && r.formats.length > 0) { %>
+            <div class="result-quality">
+                <% r.formats.slice(0, 4).forEach(function (f) { %>
+                    <span class="q-chip <%= f.hiRes ? "hires" : (f.atmos ? "atmos" : (f.lossless ? "ok" : "")) %>" title="<%= f.label %>"><%= f.detail %><% if (f.hiRes) { %> · Hi-Res<% } else if (f.atmos) { %> · Atmos<% } %></span>
+                <% }) %>
+                <% if (r.formats.length > 4) { %>
+                    <span class="q-chip">+<%= r.formats.length - 4 %></span>
+                <% } %>
+            </div>
+        <% } else if (r.type === "song" || r.type === "album") { %>
+            <div class="result-quality"><span class="q-chip">音质：未取到（wrapper-lite 没返回该曲目的播放清单）</span></div>
+        <% } %>
+    </div>
+    <div class="actions">
+        <% if (!r.url) { %>
+            <span class="muted small">无可下载链接</span>
+        <% } else if (r.type === "music-video") { %>
+            <button class="dl" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="mv">下载 MV</button>
+        <% } else if (r.type === "song" || r.type === "album") { %>
+            <%
+                /* 每个编码取第一条：ALAC/Atmos/AAC 各按音质降序排过（见 CODEC_ORDER） */
+                const byCodec = {};
+                (r.formats || []).forEach(function (f) {
+                    if (f.atmos) {
+                        if (!byCodec.atmos) byCodec.atmos = f;
+                    } else if (f.codec === "alac") {
+                        if (!byCodec.alac) byCodec.alac = f;
+                    } else if (f.codec === "aac" || f.codec === "he-aac") {
+                        if (!byCodec.aac) byCodec.aac = f;
+                    }
+                });
+            %>
+            <button class="dl" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="alac" title="<%= byCodec.alac ? byCodec.alac.label : "取整轨 ALAC 无损" %>">
+                下载 ALAC<% if (byCodec.alac) { %><span class="btn-sub"><%= byCodec.alac.detail %></span><% } %>
+            </button>
+            <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="atmos" title="<%= byCodec.atmos ? byCodec.atmos.label : "取 Dolby Atmos 空间音频" %>">
+                下载 Atmos<% if (byCodec.atmos) { %><span class="btn-sub"><%= byCodec.atmos.detail %></span><% } %>
+            </button>
+            <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="aac" title="<%= byCodec.aac ? byCodec.aac.label : "取 AAC 有损" %>">
+                下载 AAC<% if (byCodec.aac) { %><span class="btn-sub"><%= byCodec.aac.detail %></span><% } %>
+            </button>
+        <% } %>
+    </div>
+</li>

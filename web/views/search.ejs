@@ -3,14 +3,14 @@
 <section class="card">
     <h1>搜索 Apple Music</h1>
     <p class="muted">目录搜索使用公开的网页播放器开发者 token，<b>不需要 Apple 账号</b>。</p>
-    <form method="get" action="/search" class="row">
+    <form method="get" action="/search" class="row" data-search-form>
         <input name="q" value="<%= q %>" placeholder="歌名 / 专辑 / 艺人" autofocus required>
         <label class="inline-field">商店
             <%- include("partials/region-select", {
                 name: "region", id: "search-region", selected: region, inheritLabel: `默认（${defaultRegionName}）`
             }) %>
         </label>
-        <button type="submit">搜索</button>
+        <button type="submit" data-search-submit>搜索</button>
     </form>
     <%
     /* 只在「真的换了商店」时提示 —— 默认搜索不必解释 */
@@ -23,82 +23,18 @@
         每条结果下面的<strong>音质芯片</strong>是该曲目实际可下的规格（位深 / 采样率 / Hi-Res / Dolby Atmos）。
         它取自 Apple 的播放清单，所以<strong>比"ALAC / AAC"这种笼统标签更准</strong>：
         ALAC 也分 16-bit/44.1 kHz 与 24-bit/96 kHz（后者才是 Hi-Res）。
-        取数要访问 wrapper-lite，首次搜索会略慢几秒，之后同一曲目命中缓存。
+        取数的顺序是：<strong>先出结果列表，再逐条回填音质</strong> ——
+        所以看到结果就用不着再等了，芯片会一条条补上（首次搜索每条约 1 秒，之后同一曲目命中缓存）。
     </p>
-    <% if (error) { %><p class="err">搜索失败：<%= error %></p><% } %>
 </section>
 
-<% if (q && !error) { %>
-<section class="card">
-    <h2>结果（<%= results.length %>）</h2>
-    <% if (results.length === 0) { %>
-        <p class="muted">
-            这个商店里没有结果。
-            <% if (region) { %>换回<a href="/search?q=<%= encodeURIComponent(q) %>">默认商店</a>再试？<% } %>
-        </p>
-    <% } %>
-    <ul class="results">
-    <% results.forEach(function (r) { %>
-        <li class="result">
-            <% if (r.artwork) { %><img src="<%= r.artwork %>" alt="" loading="lazy"><% } else { %><span class="art-ph"></span><% } %>
-            <div class="meta">
-                <div class="title"><%= r.name %></div>
-                <div class="muted">
-                    <%= r.type %>
-                    <% if (r.artistName) { %> · <%= r.artistName %><% } %>
-                    <% if (r.albumName) { %> · <%= r.albumName %><% } %>
-                    <% if (r.trackCount) { %> · <%= r.trackCount %> 首<% } %>
-                </div>
-                <%# 音质明细：位深 / 采样率 / Hi-Res / Atmos 取自该曲目的 master playlist（见 src/format.ts） %>
-                <% if (r.type === "music-video") { %>
-                    <div class="result-quality">
-                        <span class="q-chip atmos">MV · 视频 + 音轨</span>
-                        <span class="muted small">音轨类型与分辨率按 config.yaml 的 mv-audio-type / mv-max</span>
-                    </div>
-                <% } else if (r.formats && r.formats.length) { %>
-                    <div class="result-quality">
-                        <% r.formats.slice(0, 4).forEach(function (f) { %>
-                            <span class="q-chip <%= f.hiRes ? 'hires' : (f.atmos ? 'atmos' : (f.lossless ? 'ok' : '')) %>"
-                                  title="<%= f.label %>"><%= f.detail %><% if (f.hiRes) { %> Hi-Res<% } %><% if (f.atmos) { %> Atmos<% } %></span>
-                        <% }); %>
-                        <% if (r.formats.length > 4) { %><span class="muted small">+<%= r.formats.length - 4 %></span><% } %>
-                    </div>
-                <% } else if (r.type === "song" || r.type === "album") { %>
-                    <div class="muted small">音质：未取到（wrapper-lite 没返回该曲目的播放清单）</div>
-                <% } %>
-            </div>
-            <div class="actions">
-                <% if (r.url) { %>
-                <% if (r.type === "music-video") { %>
-                    <%# MV 只有一个动作：引擎按链接分派，没有编码可选 %>
-                    <button class="dl" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="mv"
-                            title="音乐视频（MV）">下载 MV</button>
-                <% } else { %>
-                    <%
-                    /* 按编码挑一条最有代表性的音质写进按钮副标题 —— 免得"点 ALAC 才发现是 16/44.1" */
-                    const byCodec = {};
-                    (r.formats || []).forEach(function (f) {
-                        const k = f.atmos ? "atmos" : (f.codec === "alac" ? "alac" : ((f.codec === "aac" || f.codec === "he-aac") ? "aac" : null));
-                        if (k && !byCodec[k]) byCodec[k] = f;
-                    });
-                    %>
-                    <button class="dl" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="alac"
-                            title="<%= byCodec.alac ? byCodec.alac.label : 'ALAC 无损' %>">ALAC<% if (byCodec.alac) { %><span class="btn-sub"><%= byCodec.alac.detail %></span><% } %></button>
-                    <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="atmos"
-                            title="<%= byCodec.atmos ? byCodec.atmos.label : 'Dolby Atmos' %>">Atmos<% if (byCodec.atmos) { %><span class="btn-sub"><%= byCodec.atmos.detail %></span><% } %></button>
-                    <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="aac"
-                            title="<%= byCodec.aac ? byCodec.aac.label : 'AAC 有损' %>">AAC<% if (byCodec.aac) { %><span class="btn-sub"><%= byCodec.aac.detail %></span><% } %></button>
-                <% } %>
-                <% } else { %>
-                    <span class="muted">无可下载链接</span>
-                <% } %>
-            </div>
-        </li>
-    <% }); %>
-    </ul>
-</section>
-<% } %>
+<%# 结果区两种进法：带 q 时有 JS 就换成流式（见 public/search.js），没有 JS 就是服务端渲染好的静态结果 %>
+<%- include("partials/results-section", {
+    q: q, error: error, results: results, region: region
+}) %>
 
 <p id="search-msg" class="toast"></p>
+
+<script src="/static/search.js?v=<%= assetVersion %>" defer></script>
 
 <%- include("partials/foot") %>

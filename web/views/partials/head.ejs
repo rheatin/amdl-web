@@ -3,6 +3,9 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <%# 深色-only 站点：让浏览器把地址栏 / 滚动条 / 表单控件也按深色画，避免白边 %>
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#07080e">
     <title>amdl-web</title>
     <meta name="description" content="自托管 Apple Music 下载站点 —— wrapper-lite + apple-music-dl">
     <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='9.5'%20fill='%235b7fe0'/%3E%3Ccircle%20cx='10.6'%20cy='20.7'%20r='3.7'%20fill='%230a0b10'/%3E%3Cpath%20d='M13.9%2020.1V8.9l6.9%202'%20fill='none'%20stroke='%230a0b10'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3Cpath%20d='M22.2%2013.6v5.1m0%200%202.3-2.3m-2.3%202.3-2.3-2.3'%20fill='none'%20stroke='%230a0b10'%20stroke-width='2.1'%20stroke-linecap='round'/%3E%3C/svg%3E">
@@ -36,7 +39,8 @@
         </a>
     </nav>
     <form method="post" action="/logout" class="inline">
-        <button class="ghost" type="submit" title="退出登录"><%= user.username %> · 退出</button>
+        <%# 用户名在窄屏用 CSS 藏起来（见 app.css 的 .nav-user），只留"退出" %>
+        <button class="ghost" type="submit" title="退出登录"><span class="nav-user"><%= user.username %> · </span>退出</button>
     </form>
 </header>
 <% } %>

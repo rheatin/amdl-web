@@ -25,9 +25,48 @@ function emit(jobId: number, ev: JobEvent): void {
 const pending: number[] = [];
 let running = 0;
 
+/**
+ * 正在跑的引擎进程，按任务 id 索引 —— 取消要能真的把它杀掉（见 cancelJob / ripper.rip）。
+ */
+const controllers = new Map<number, AbortController>();
+
 export function enqueue(job: Job): void {
     pending.push(job.id);
     pump();
+}
+
+/**
+ * 取消一个任务。两种情形都算「取消成功」：
+ *   * 还在排队 —— 从队列里摘掉，引擎根本不会启动；
+ *   * 正在运行 —— abort 掉 kill 信号，ripper 会 SIGKILL 引擎，execute() 收尾时按 cancelled 落库。
+ *
+ * 返回 false 表示这个任务已经结束了（终态），没什么可取消的。
+ */
+export function cancelJob(id: number): boolean {
+    const job = store.job(id);
+    if (!job) return false;
+    if (job.status !== "queued" && job.status !== "running") return false;
+
+    const i = pending.indexOf(id);
+    if (i >= 0) pending.splice(i, 1);
+
+    // 先落库再 abort：这样页面立刻能看到「已取消」，而不用等引擎进程真的死掉
+    store.updateJob(id, {
+        status: "cancelled",
+        finishedAt: Date.now(),
+        error: job.status === "running" ? "已取消（引擎已终止，已下载的文件保留）" : "已取消（还没开始跑）"
+    });
+    store.flush();
+    emit(id, { type: "status", status: "cancelled", error: "已取消", at: Date.now() });
+
+    controllers.get(id)?.abort();
+    return true;
+}
+
+/** 队列里还有没有这个 id（排队中或运行中）。 */
+export function isActive(id: number): boolean {
+    const job = store.job(id);
+    return Boolean(job && (job.status === "running" || job.status === "queued")) || pending.includes(id);
 }
 
 function pump(): void {
@@ -46,6 +85,9 @@ async function execute(jobId: number): Promise<void> {
     const job = store.job(jobId);
     if (!job) return;
 
+    const controller = new AbortController();
+    controllers.set(jobId, controller);
+
     const startedAt = Date.now();
     store.updateJob(jobId, { status: "running", startedAt, error: undefined, tracks: [], log: [] });
     emit(jobId, { type: "status", status: "running", at: Date.now() });
@@ -55,7 +97,8 @@ async function execute(jobId: number): Promise<void> {
         emit(jobId, { type: "log", line, at: Date.now() });
     };
 
-    const result = await rip(job, say);
+    const result = await rip(job, say, controller.signal);
+    controllers.delete(jobId);
 
     if (result.summary) {
         const s = result.summary;
@@ -76,6 +119,23 @@ async function execute(jobId: number): Promise<void> {
     const fixed = applyFileModes(tracks);
     if (fixed > 0 && config.fileMode !== null) {
         say(`[amdl-web] 已把 ${fixed} 个文件权限设为 ${config.fileMode.toString(8)}`);
+    }
+
+    /**
+     * 取消过就别再按引擎的退出码判状态了：SIGKILL 出来的是非 0 码，
+     * 直接走下面的分支会把用户主动取消写成「失败」，任务页与重试按钮都会说谎。
+     * 已经落盘的曲目照样记上（取消不等于回滚）。
+     */
+    if (controller.signal.aborted) {
+        store.updateJob(jobId, {
+            status: "cancelled",
+            finishedAt: Date.now(),
+            error: `已取消 · ${tracks.length} 首已落盘（文件保留）`,
+            tracks
+        });
+        store.flush();
+        emit(jobId, { type: "status", status: "cancelled", error: "已取消", tracks: tracks.length, at: Date.now() });
+        return;
     }
 
     // 有文件落盘就算「部分完成」，哪怕引擎是崩溃退出、连汇总行都没有

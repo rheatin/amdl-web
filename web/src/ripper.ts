@@ -68,6 +68,19 @@ export function jobConfigDir(jobId: number): string {
     return path.join(config.dataDir, "jobcfg", String(jobId));
 }
 
+/**
+ * 删任务记录时顺带清掉它那份私有 config.yaml。
+ * 失败一律吞掉：目录正被引擎占着也好、权限不对也好，留着最多是一点垃圾，
+ * 而删记录这件事本身已经成功了，不该因为清目录失败就回滚。
+ */
+export function removeJobConfigDir(jobId: number): void {
+    try {
+        fs.rmSync(jobConfigDir(jobId), { recursive: true, force: true });
+    } catch {
+        /* 见上 */
+    }
+}
+
 /** 本服务必须掌握的键（无论用户的 config.yaml 怎么写）。 */
 /**
  * 本服务必须掌握的键（无论用户的 config.yaml 怎么写）。
@@ -111,8 +124,11 @@ export function writeJobConfig(job: Job): string {
 /**
  * Runs one rip to completion.
  * @param onLine  called for every stdout/stderr line (for the live console + SSE)
+ * @param signal  用户点「取消」时 abort：立刻 SIGKILL 引擎，并把这之前已经解析出来的
+ *                落盘清单带回去（已经下好的文件不能装作没有，任务状态由 queue 决定成
+ *                `cancelled` 而不是 `failed`）。
  */
-export function rip(job: Job, onLine: (line: string) => void): Promise<RipResult> {
+export function rip(job: Job, onLine: (line: string) => void, signal?: AbortSignal): Promise<RipResult> {
     const args = engineArgs(job.url, job.codec);
 
     let cwd = config.engineDir;
@@ -149,8 +165,29 @@ export function rip(job: Job, onLine: (line: string) => void): Promise<RipResult
             if (settled) return;
             settled = true;
             if (timer) clearTimeout(timer);
+            signal?.removeEventListener("abort", onAbort);
             resolve(result);
         };
+
+        /**
+         * 取消：杀掉引擎，并用「此刻已经打出来的 JSON 汇总」收尾。
+         * 注：引擎收尾才打印 `--json` 清单，所以正常中途取消拿不到它 ——
+         * 这时返回空 tracks，由 queue 的 discoverLandedTracks 兜底找回已落盘文件。
+         */
+        const onAbort = (): void => {
+            onLine("[amdl-web] 已取消，终止引擎进程");
+            child.kill("SIGKILL");
+            finish({ ok: false, tracks: parseTracks(stdoutLines), error: "已取消" });
+        };
+
+        if (signal) {
+            if (signal.aborted) {
+                // 已经取消过了（排队时就点了取消）：别白跑一遍引擎
+                onAbort();
+                return;
+            }
+            signal.addEventListener("abort", onAbort, { once: true });
+        }
 
         if (config.jobTimeoutSec > 0) {
             timer = setTimeout(() => {
