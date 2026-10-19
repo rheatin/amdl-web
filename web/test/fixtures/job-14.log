@@ -1,0 +1,268 @@
+[amdl-web] 基线 = config.yaml（/engine/config.yaml） · 本任务无覆盖项
+Warning: config.yaml.example not found, using config.yaml only
+lite-server regions: [cn]
+Queue 1 of 1: Album
+EGOIST
+Extra terrestrial Biological Entities
+Track 1 of 12: songs
+01. 原罪の灯
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/12 MB, 58 MB/s)
+Decrypting...  10%  (1.2/12 MB, 688 kB/s)
+Decrypting...  21%  (2.5/12 MB, 414 kB/s)
+Decrypting...  31%  (3.7/12 MB, 414 kB/s)
+                                            Decrypting...  43%  (5.1/12 MB, 414 kB/s)
+Decrypting...  55%  (6.5/12 MB, 414 kB/s)
+                                            Decrypting...  68%  (8.1/12 MB, 414 kB/s)                                             Decrypting...  80%  (9.4/12 MB, 414 kB/s)
+Decrypting...  92%  (11/12 MB, 414 kB/s)
+                                            Decrypting... 100%  (12/12 MB, 1.1 MB/s) [10s]
+Decrypted
+Track #1: 1445 packets, max_samples_per_frame=4096 sample_size=16 channels=2
+Track 2 of 12: songs
+02. The Everlasting Guilty Crown
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/41 MB, 77 MB/s)
+Decrypting...   4%  (1.7/41 MB, 4.5 MB/s)
+                                            Decrypting...   8%  (3.4/41 MB, 366 kB/s)
+                                            Decrypting...  12%  (5.3/41 MB, 366 kB/s)
+                                            Decrypting...  17%  (7.3/41 MB, 366 kB/s)
+                                            Decrypting...  22%  (9.3/41 MB, 5.6 MB/s)
+                                            Decrypting...  27%  (11/41 MB, 5.6 MB/s)
+Decrypting...  32%  (13/41 MB, 5.6 MB/s)
+                                            Decrypting...  36%  (15/41 MB, 5.6 MB/s)
+Decrypting...  41%  (17/41 MB, 5.6 MB/s)
+                                            Decrypting...  45%  (19/41 MB, 5.6 MB/s)
+                                            Decrypting...  50%  (21/41 MB, 10 MB/s)
+Decrypting...  55%  (23/41 MB, 10 MB/s)
+                                            Decrypting...  60%  (25/41 MB, 9.3 MB/s)
+                                            Decrypting...  65%  (27/41 MB, 9.3 MB/s)
+Decrypting...  69%  (29/41 MB, 9.3 MB/s)
+Decrypting...  74%  (31/41 MB, 9.3 MB/s)
+Decrypting...  78%  (33/41 MB, 10 MB/s)
+Decrypting...  83%  (34/41 MB, 10 MB/s)
+Decrypting...  88%  (37/41 MB, 10 MB/s)
+Decrypting...  93%  (39/41 MB, 10 MB/s)
+                                            Decrypting...  97%  (40/41 MB, 10 MB/s)
+Decrypting... 100%  (41/41 MB, 3.3 MB/s) [12s]
+Decrypted
+Track #1: 3521 packets, max_samples_per_frame=4096 sample_size=16 channels=2
+Track 3 of 12: songs
+03. Extra terrestrial Biological Entities
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/42 MB, 72 MB/s)
+Decrypting...   3%  (1.5/42 MB, 554 kB/s)
+Decrypting...   7%  (3.0/42 MB, 306 kB/s)
+                                            Decrypting...  11%  (4.7/42 MB, 306 kB/s)
+Decrypting...  15%  (6.4/42 MB, 306 kB/s)
+Decrypting...  19%  (8.3/42 MB, 306 kB/s)
+Decrypting...  24%  (10/42 MB, 306 kB/s)
+                                            Decrypting...  28%  (12/42 MB, 306 kB/s)
+Decrypting...  34%  (14/42 MB, 306 kB/s)
+Decrypting...  39%  (16/42 MB, 306 kB/s)
+Decrypting...  43%  (18/42 MB, 8.5 MB/s)
+Decrypting...  47%  (20/42 MB, 8.5 MB/s)
+Decrypting...  52%  (22/42 MB, 6.7 MB/s)
+Decrypting...  56%  (24/42 MB, 5.5 MB/s)
+Decrypting...  61%  (26/42 MB, 5.5 MB/s)
+Decrypting...  66%  (28/42 MB, 5.4 MB/s)
+Decrypting...  71%  (30/42 MB, 4.8 MB/s)
+Decrypting...  75%  (32/42 MB, 4.8 MB/s)
+Decrypting...  79%  (34/42 MB, 4.8 MB/s)
+Decrypting...  84%  (36/42 MB, 5.5 MB/s)
+                                            Decrypting...  89%  (38/42 MB, 5.5 MB/s)
+Decrypting...  94%  (40/42 MB, 5.5 MB/s)
+Decrypting...  98%  (41/42 MB, 5.9 MB/s)
+Decrypting... 100%  (42/42 MB, 1.1 MB/s) [39s]
+Decrypted
+Track #1: 3669 packets, max_samples_per_frame=4096 sample_size=16 channels=2
+Track 4 of 12: songs
+04. 雨、キミを連れて
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/32 MB, 77 MB/s)
+Decrypting...   3%  (1.2/32 MB, 614 kB/s)
+Decrypting...   9%  (3.1/32 MB, 389 kB/s)
+Decrypting...  15%  (5.0/32 MB, 389 kB/s)
+Decrypting...  22%  (7.1/32 MB, 389 kB/s)
+Decrypting...  29%  (9.2/32 MB, 389 kB/s)
+Decrypting...  33%  (11/32 MB, 389 kB/s)
+Decrypting...  39%  (12/32 MB, 389 kB/s)
+Decrypting...  44%  (14/32 MB, 389 kB/s)
+Decrypting...  50%  (16/32 MB, 7.6 MB/s)
+Decrypting...  56%  (18/32 MB, 7.6 MB/s)
+Decrypting...  63%  (20/32 MB, 7.6 MB/s)
+                                            Decrypting...  69%  (22/32 MB, 5.9 MB/s)
+Decrypting...  75%  (24/32 MB, 5.9 MB/s)
+Decrypting...  82%  (26/32 MB, 5.7 MB/s)
+Decrypting...  88%  (28/32 MB, 5.7 MB/s)
+Decrypting...  95%  (30/32 MB, 5.5 MB/s)
+Decrypting...  99%  (32/32 MB, 5.5 MB/s)                                             Decrypting... 100%  (32/32 MB, 1.4 MB/s) [22s]
+Decrypted
+Track #1: 2755 packets, max_samples_per_frame=4096 sample_size=16 channels=2
+Track 5 of 12: songs
+05. Lovely Icecream Princess Sweetie
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/30 MB, 66 MB/s)
+Decrypting...   5%  (1.6/30 MB, 610 kB/s)
+Decrypting...  11%  (3.4/30 MB, 431 kB/s)
+Decrypting...  17%  (5.3/30 MB, 431 kB/s)
+Decrypting...  23%  (7.0/30 MB, 431 kB/s)
+Decrypting...  30%  (9.0/30 MB, 431 kB/s)
+Decrypting...  36%  (11/30 MB, 431 kB/s)
+                                            Decrypting...  42%  (13/30 MB, 431 kB/s)
+Decrypting...  48%  (14/30 MB, 431 kB/s)
+Decrypting...  54%  (16/30 MB, 431 kB/s)
+Decrypting...  61%  (18/30 MB, 8.2 MB/s)
+Decrypting...  67%  (20/30 MB, 8.2 MB/s)
+Decrypting...  73%  (22/30 MB, 6.4 MB/s)
+Decrypting...  80%  (24/30 MB, 5.2 MB/s)
+Decrypting...  87%  (26/30 MB, 5.2 MB/s)
+Decrypting...  93%  (28/30 MB, 5.2 MB/s)
+                                            Decrypting...  99%  (30/30 MB, 5.2 MB/s)                                             Decrypting... 100%  (30/30 MB, 1.7 MB/s) [17s]
+Decrypted
+Track #1: 2622 packets, max_samples_per_frame=4096 sample_size=16 channels=2
+Track 6 of 12: songs
+06. 手遅れ
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/22 MB, 76 MB/s)
+Decrypting...   4%  (994 kB/22 MB, 1.4 MB/s)
+                                             Decrypting...  11%  (2.5/22 MB, 765 kB/s)
+Decrypting...  19%  (4.3/22 MB, 765 kB/s)
+Decrypting...  26%  (6.0/22 MB, 765 kB/s)
+Decrypting...  34%  (7.8/22 MB, 765 kB/s)
+Decrypting...  43%  (9.7/22 MB, 765 kB/s)
+Decrypting...  51%  (11/22 MB, 765 kB/s)
+                                             Decrypting...  58%  (13/22 MB, 6.3 MB/s)
+Decrypting...  64%  (14/22 MB, 6.3 MB/s)
+Decrypting...  71%  (16/22 MB, 6.3 MB/s)
+Decrypting...  79%  (18/22 MB, 6.8 MB/s)
+Decrypting...  87%  (20/22 MB, 6.8 MB/s)
+Decrypting...  95%  (21/22 MB, 5.7 MB/s)
+Decrypting... 100%  (22/22 MB, 1.0 MB/s) [21s]
+Decrypted
+Track #1: 2226 packets, max_samples_per_frame=4096 sample_size=16 channels=2
+Track 7 of 12: songs
+07. LoveStruck
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/30 MB, 71 MB/s)
+Decrypting...   4%  (1.2/30 MB, 622 kB/s)
+Decrypting...   9%  (2.7/30 MB, 389 kB/s)
+Decrypting...  14%  (4.3/30 MB, 389 kB/s)
+Decrypting...  20%  (6.0/30 MB, 389 kB/s)
+Decrypting...  26%  (7.9/30 MB, 389 kB/s)
+Decrypting...  31%  (9.5/30 MB, 389 kB/s)
+Decrypting...  37%  (11/30 MB, 389 kB/s)
+Decrypting...  43%  (13/30 MB, 389 kB/s)
+Decrypting...  49%  (15/30 MB, 6.7 MB/s)
+Decrypting...  55%  (17/30 MB, 6.7 MB/s)
+Decrypting...  60%  (18/30 MB, 6.7 MB/s)
+                                            Decrypting...  66%  (20/30 MB, 6.7 MB/s)
+Decrypting...  72%  (22/30 MB, 5.5 MB/s)
+                                            Decrypting...  77%  (23/30 MB, 4.4 MB/s)
+Decrypting...  83%  (25/30 MB, 4.4 MB/s)
+                                            Decrypting...  90%  (27/30 MB, 4.4 MB/s)
+Decrypting...  96%  (29/30 MB, 4.6 MB/s)
+                                            Decrypting...  99%  (30/30 MB, 4.6 MB/s)
+                                            Decrypting... 100%  (30/30 MB, 1.4 MB/s) [21s]
+Decrypted
+Track #1: 2925 packets, max_samples_per_frame=4096 sample_size=16 channels=2
+Track 8 of 12: songs
+08. Ce que j'aime 〜inori no kyuuzitu〜
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/5.4 MB, 80 MB/s)
+Decrypting...  20%  (1.1/5.4 MB, 635 kB/s)
+Decrypting...  44%  (2.4/5.4 MB, 440 kB/s)
+Decrypting...  70%  (3.8/5.4 MB, 440 kB/s)
+Decrypting...  96%  (5.2/5.4 MB, 440 kB/s)                                              Decrypting... 100%  (5.4/5.4 MB, 766 kB/s) [7s]
+Decrypted
+Track #1: 725 packets, max_samples_per_frame=4096 sample_size=16 channels=2
+Track 9 of 12: songs
+09. 想いを巡らす100の事象
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/16 MB, 81 MB/s)
+Decrypting...   7%  (1.3/16 MB, 568 kB/s)
+Decrypting...  17%  (2.8/16 MB, 334 kB/s)
+Decrypting...  26%  (4.2/16 MB, 334 kB/s)
+Decrypting...  35%  (5.7/16 MB, 334 kB/s)
+Decrypting...  44%  (7.2/16 MB, 334 kB/s)
+Decrypting...  52%  (8.5/16 MB, 334 kB/s)
+Decrypting...  61%  (10/16 MB, 334 kB/s)
+                                            Decrypting...  71%  (12/16 MB, 334 kB/s)
+Decrypting...  80%  (13/16 MB, 334 kB/s)
+                                            Decrypting...  89%  (14/16 MB, 334 kB/s)
+                                            Decrypting...  97%  (16/16 MB, 334 kB/s)
+                                            Decrypting... 100%  (16/16 MB, 934 kB/s) [17s]
+Decrypted
+Track #1: 1888 packets, max_samples_per_frame=4096 sample_size=16 channels=2
+Track 10 of 12: songs
+10. この世界で見つけたもの
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/32 MB, 73 MB/s)
+Decrypting...   4%  (1.4/32 MB, 137 kB/s)
+                                            Decrypting...   8%  (2.7/32 MB, 93 kB/s)
+Decrypting...  12%  (4.2/32 MB, 93 kB/s)
+                                            Decrypting...  17%  (5.7/32 MB, 93 kB/s)
+Decrypting...  22%  (7.3/32 MB, 93 kB/s)
+Decrypting...  28%  (9.2/32 MB, 93 kB/s)
+                                            Decrypting...  34%  (11/32 MB, 5.1 MB/s)
+                                            Decrypting...  40%  (13/32 MB, 5.1 MB/s)
+Decrypting...  46%  (15/32 MB, 5.1 MB/s)
+Decrypting...  51%  (16/32 MB, 5.1 MB/s)
+Decrypting...  55%  (18/32 MB, 5.1 MB/s)
+Failed to run v4: read fragment: decode mdat pos 18056008: stream error: stream ID 59; INTERNAL_ERROR; received from peer
+Track 11 of 12: songs
+11. Planetes
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/37 MB, 73 MB/s)
+Decrypting...   3%  (1.1/37 MB, 2.0 MB/s)
+Decrypting...   6%  (2.6/37 MB, 1.1 MB/s)
+Decrypting...  10%  (4.1/37 MB, 1.1 MB/s)
+Decrypting...  15%  (5.7/37 MB, 1.1 MB/s)
+Decrypting...  19%  (7.2/37 MB, 1.1 MB/s)
+Decrypting...  23%  (8.7/37 MB, 1.1 MB/s)
+Decrypting...  27%  (10/37 MB, 1.1 MB/s)
+                                            Decrypting...  31%  (12/37 MB, 1.1 MB/s)
+Decrypting...  35%  (13/37 MB, 1.1 MB/s)
+Decrypting...  39%  (15/37 MB, 1.1 MB/s)
+Decrypting...  44%  (16/37 MB, 1.1 MB/s)
+                                            Decrypting...  48%  (18/37 MB, 9.9 MB/s)
+Decrypting...  53%  (20/37 MB, 9.9 MB/s)
+                                            Decrypting...  58%  (22/37 MB, 9.9 MB/s)
+Decrypting...  62%  (23/37 MB, 9.9 MB/s)
+                                            Decrypting...  67%  (25/37 MB, 9.9 MB/s)                                             Decrypting...  71%  (27/37 MB, 9.9 MB/s)
+Decrypting...  76%  (28/37 MB, 9.9 MB/s)
+                                            Decrypting...  81%  (30/37 MB, 9.9 MB/s)
+Decrypting...  85%  (32/37 MB, 9.9 MB/s)
+                                            Decrypting...  89%  (34/37 MB, 9.9 MB/s)
+                                            Decrypting...  93%  (35/37 MB, 9.9 MB/s)
+                                            Decrypting...  96%  (36/37 MB, 9.9 MB/s)
+Decrypting...  99%  (37/37 MB, 9.9 MB/s)                                             Decrypting... 100%  (37/37 MB, 2.4 MB/s) [15s]
+Decrypted
+Track #1: 3958 packets, max_samples_per_frame=4096 sample_size=16 channels=2
+Track 12 of 12: songs
+12. Departures 〜あなたにおくるアイの歌〜
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/28 MB, 66 MB/s)
+Decrypting...   4%  (1.3/28 MB, 2.3 MB/s)
+Decrypting...   9%  (2.6/28 MB, 1.2 MB/s)
+Decrypting...  14%  (4.1/28 MB, 1.2 MB/s)
+Decrypting...  19%  (5.5/28 MB, 1.2 MB/s)
+Decrypting...  25%  (7.3/28 MB, 1.2 MB/s)
+Decrypting...  31%  (9.0/28 MB, 1.2 MB/s)
+Decrypting...  37%  (11/28 MB, 1.2 MB/s)
+Decrypting...  43%  (12/28 MB, 1.2 MB/s)
+Decrypting...  49%  (14/28 MB, 6.8 MB/s)
+Decrypting...  56%  (16/28 MB, 6.8 MB/s)
+                                            Decrypting...  63%  (18/28 MB, 6.8 MB/s)
+Decrypting...  70%  (20/28 MB, 6.7 MB/s)
+Decrypting...  76%  (22/28 MB, 6.7 MB/s)
+Decrypting...  82%  (23/28 MB, 6.7 MB/s)
+Decrypting...  89%  (25/28 MB, 6.7 MB/s)
+Decrypting...  96%  (27/28 MB, 8.1 MB/s)
+Decrypting...  99%  (28/28 MB, 8.1 MB/s)                                             Decrypting... 100%  (28/28 MB, 2.4 MB/s) [11s]
+Decrypted
+Track #1: 2746 packets, max_samples_per_frame=4096 sample_size=16 channels=2
+=======  [✔ ] Completed: 11/12  |  [⚠ ] Warnings: 0  |  [✖ ] Errors: 1  =======
+Error detected, exiting...
+[amdl-web] 引擎汇总：完成 11/12 · 警告 0 · 错误 1
+[amdl-web] 引擎未给出落盘清单，按 mtime 找回 11 个文件
+[amdl-web] 已把 24 个文件权限设为 666

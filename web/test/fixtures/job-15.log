@@ -1,0 +1,68 @@
+[amdl-web] 基线 = config.yaml（/engine/config.yaml） · 本任务无覆盖项
+Warning: config.yaml.example not found, using config.yaml only
+lite-server regions: [cn]
+Queue 1 of 1: Album
+EGOIST
+Extra terrestrial Biological Entities
+Track 1 of 12: songs
+01. 原罪の灯
+Track already exists locally.
+Track 2 of 12: songs
+02. The Everlasting Guilty Crown
+Track already exists locally.
+Track 3 of 12: songs
+03. Extra terrestrial Biological Entities
+Track already exists locally.
+Track 4 of 12: songs
+04. 雨、キミを連れて
+Track already exists locally.
+Track 5 of 12: songs
+05. Lovely Icecream Princess Sweetie
+Track already exists locally.
+Track 6 of 12: songs
+06. 手遅れ
+Track already exists locally.
+Track 7 of 12: songs
+07. LoveStruck
+Track already exists locally.
+Track 8 of 12: songs
+08. Ce que j'aime 〜inori no kyuuzitu〜
+Track already exists locally.
+Track 9 of 12: songs
+09. 想いを巡らす100の事象
+Track already exists locally.
+Track 10 of 12: songs
+10. この世界で見つけたもの
+16-bit / 44100 Hz
+Decrypting...   0%  (1.0 kB/32 MB, 40 MB/s)
+Decrypting...   4%  (1.4/32 MB, 1.7 MB/s)
+Decrypting...   8%  (2.7/32 MB, 935 kB/s)
+Decrypting...  12%  (4.2/32 MB, 935 kB/s)
+                                            Decrypting...  17%  (5.7/32 MB, 935 kB/s)
+                                            Decrypting...  22%  (7.3/32 MB, 935 kB/s)
+Decrypting...  28%  (9.2/32 MB, 3.9 MB/s)
+Decrypting...  34%  (11/32 MB, 3.9 MB/s)
+Decrypting...  40%  (13/32 MB, 4.3 MB/s)
+Decrypting...  46%  (15/32 MB, 4.0 MB/s)
+Decrypting...  51%  (16/32 MB, 3.7 MB/s)
+Decrypting...  55%  (18/32 MB, 3.6 MB/s)
+Decrypting...  61%  (20/32 MB, 3.5 MB/s)
+Decrypting...  66%  (21/32 MB, 3.2 MB/s)
+Decrypting...  72%  (23/32 MB, 3.0 MB/s)
+Decrypting...  77%  (25/32 MB, 3.1 MB/s)
+Decrypting...  83%  (27/32 MB, 3.4 MB/s)
+Decrypting...  89%  (29/32 MB, 2.8 MB/s)
+Decrypting...  94%  (31/32 MB, 2.6 MB/s)
+Decrypting...  99%  (32/32 MB, 2.6 MB/s)
+                                            Decrypting... 100%  (32/32 MB, 1.5 MB/s) [21s] Decrypted
+Track #1: 3138 packets, max_samples_per_frame=4096 sample_size=16 channels=2
+Track 11 of 12: songs
+11. Planetes
+Track already exists locally.
+Track 12 of 12: songs
+12. Departures 〜あなたにおくるアイの歌〜
+Track already exists locally.
+=======  [✔ ] Completed: 12/12  |  [⚠ ] Warnings: 0  |  [✖ ] Errors: 0  =======
+[{"path":"/downloads/ALAC/EGOIST/Extra terrestrial Biological Entities/01. 原罪の灯.m4a","artist":"EGOIST","artist_id":"320345584","album":"Extra terrestrial Biological Entities","song":"原罪の灯"},{"path":"/downloads/ALAC/EGOIST/Extra terrestrial Biological Entities/02. The Everlasting Guilty Crown.m4a","artist":"EGOIST","artist_id":"320345584","album":"Extra terrestrial Biological Entities","song":"The Everlasting Guilty Crown"},{"path":"/downloads/ALAC/EGOIST/Extra terrestrial Biological Entities/03. Extra terrestrial Biological Entities.m4a","artist":"EGOIST","artist_id":"320345584","album":"Extra terrestrial Biological Entities","song":"Extra terrestrial Biological Entities"},{"path":"/downloads/ALAC/EGOIST/Extra terrestrial Biological Entities/04. 雨、キミを連れて.m4a","artist":"EGOIST","artist_id":"320345584","album":"Extra terrestrial Biological Entities","song":"雨、キミを連れて"},{"path":"/downloads/ALAC/EGOIST/Extra terrestrial Biological Entities/05. Lovely Icecream Princess Sweetie.m4a","artist":"EGOIST","artist_id":"320345584","album":"Extra terrestrial Biological Entities","song":"Lovely Icecream Princess Sweetie"},{"path":"/downloads/ALAC/EGOIST/Extra terrestrial Biological Entities/06. 手遅れ.m4a","artist":"EGOIST","artist_id":"320345584","album":"Extra terrestrial Biological Entities","song":"手遅れ"},{"path":"/downloads/ALAC/EGOIST/Extra terrestrial Biological Entities/07. LoveStruck.m4a","artist":"EGOIST","artist_id":"320345584","album":"Extra terrestrial Biological Entities","song":"LoveStruck"},{"path":"/downloads/ALAC/EGOIST/Extra terrestrial Biological Entities/08. Ce que j'aime 〜inori no kyuuzitu〜.m4a","artist":"EGOIST","artist_id":"320345584","album":"Extra terrestrial Biological Entities","song":"Ce que j'aime 〜inori no kyuuzitu〜"},{"path":"/downloads/ALAC/EGOIST/Extra terrestrial Biological Entities/09. 想いを巡らす100の事象.m4a","artist":"EGOIST","artist_id":"320345584","album":"Extra terrestrial Biological Entities","song":"想いを巡らす100の事象"},{"path":"/downloads/ALAC/EGOIST/Extra terrestrial Biological Entities/10. この世界で見つけたもの.m4a","artist":"EGOIST","artist_id":"320345584","album":"Extra terrestrial Biological Entities","song":"この世界で見つけたもの"},{"path":"/downloads/ALAC/EGOIST/Extra terrestrial Biological Entities/11. Planetes.m4a","artist":"EGOIST","artist_id":"320345584","album":"Extra terrestrial Biological Entities","song":"Planetes"},{"path":"/downloads/ALAC/EGOIST/Extra terrestrial Biological Entities/12. Departures 〜あなたにおくるアイの歌〜.m4a","artist":"EGOIST","artist_id":"320345584","album":"Extra terrestrial Biological Entities","song":"Departures 〜あなたにおくるアイの歌〜"}]
+[amdl-web] 引擎汇总：完成 12/12 · 警告 0 · 错误 0
+[amdl-web] 已把 2 个文件权限设为 666

@@ -60,6 +60,46 @@
 </section>
 
 <section class="card">
+    <h2 class="card-title">音质与画质上限（来自 <code>config.yaml</code>）</h2>
+    <p class="muted small">
+        搜索结果上的 Hi-Res / Dolby Atmos 标记说的是 <b>Apple 提供什么</b>；
+        这一栏说的是 <b>引擎实际上限</b>。两者不一致时，界面会在卡片上标 <span class="q-chip capped">⚠</span>，
+        因为落盘的是引擎取的那一档。
+        <span class="why right" tabindex="0">?
+            <span class="why-body">
+                这三个键的单位不同，不能互相换算：<br>
+                · <code>alac-max</code> = ALAC <b>采样率</b>上限（Hz），192000 / 96000 / 48000 / 44100<br>
+                · <code>atmos-max</code> = Atmos <b>码率</b>上限（kbps），2768 / 2448<br>
+                · <code>mv-max</code> = MV <b>纵向分辨率</b>上限，如 2160 / 1080 / 720<br><br>
+                没写就是没写 —— 这里显示「未设置（引擎用自身默认值）」，而不是替它猜一个值。
+            </span>
+        </span>
+    </p>
+    <%# 注意：这里必须用**逐行判断 + 普通输出标签**，不能把整段 HTML 拼进一个模板字符串
+        再用输出标签输出 —— EJS 会把其中的尖括号转义成实体，页面上就会出现
+        字面量的 <code>48000</code>。 %>
+    <dl class="kv">
+        <dt>ALAC 采样率上限</dt>
+        <dd>
+            <% if (ceilings && ceilings.alacMaxHz) { %><code><%= ceilings.alacMaxHz %></code> Hz（alac-max）<% } else { %><span class="muted">未设置（引擎用自身默认值）</span><% } %>
+        </dd>
+        <dt>Dolby Atmos 码率上限</dt>
+        <dd>
+            <% if (ceilings && ceilings.atmosMaxKbps) { %><code><%= ceilings.atmosMaxKbps %></code> kbps（atmos-max）<% } else { %><span class="muted">未设置</span><% } %>
+        </dd>
+        <dt>MV 分辨率 / 音轨</dt>
+        <dd>
+            <% if (ceilings && ceilings.mvMax) { %><code><%= ceilings.mvMax %>p</code><% } else { %><span class="muted">未设置</span><% } %>
+            <% if (ceilings && ceilings.mvAudioType) { %> · 音轨 <code><%= ceilings.mvAudioType %></code><% } %>
+        </dd>
+        <dt>AAC 流配置</dt>
+        <dd>
+            <% if (ceilings && ceilings.aacType) { %><code><%= ceilings.aacType %></code><% } else { %><span class="muted">未设置</span><% } %>
+        </dd>
+    </dl>
+</section>
+
+<section class="card">
     <h2>地区与语言（跟随 <code>config.yaml</code>）</h2>
     <p class="muted">
         <code>.env</code> 里的 <code>STOREFRONT</code> / <code>LANGUAGE</code> 只作兜底：

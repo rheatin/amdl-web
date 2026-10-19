@@ -1,78 +1,162 @@
 <%#
-  一条搜索结果，单独成模板块。
+  一条搜索结果 —— 封面卡。搜索页首屏、流式卡片、离线降级三条路径全部走这一个模板。
 
-  为什么拆出来：搜索页原先整块写死在 search.ejs 里，而流式接口要**逐条**把结果推给
-  浏览器（10 秒的探测不该让用户盯着空白页）。如果两处各写一份标记，改动时必然漂移
-  —— 见 urlinfo.ts 里记录过的同类教训。搜索页首屏、流式卡片、离线降级三条路径
-  全部走这一个模板。
+  为什么拆出来：流式接口要**逐条**把结果推给浏览器（10 秒的音质探测不该让
+  用户盯着空白页）。两处各写一份标记，改动时必然漂移。
 
   局部变量：
     r            —— 搜索结果（可带 formats 呈现形态）
     region       —— 当前商店，写进下载按钮的 data-region
     formatsFill  —— true 时把音质芯片区渲染成骨架，等 /search/results/stream 回填
+    ceilings     —— 引擎的有效上限（qualityCeilingsFromConfig）；用于给"Apple 有
+                    Hi-Res 但引擎只下到 48 kHz"这种情况打上 capped 标记
 
-  骨架为什么要占位而不是留空：用户的抱怨正是"什么提示都没有"。骨架让「已找到 12 首、
-  音质还在取」这件事当场可见；等真正取到（歌曲约 1 秒一条，专辑更久），芯片替换进来，
-  没有布局跳动，也不需要编一句"正在探测音频规格…"的文案。
+  信息分层的原则：**常驻只留能决定"下什么"的东西**（封面/标题/艺人/可下的编码），
+  时长、年份、完整规格、下载动作都放进展开层（hover 浮起、点击常驻）——
+  过去这些解释性文字常驻在列表里，把真正有用的信号挤成了一行小字。
+
+  封面 URL：ampmusic 保留的是含 `{w}x{h}` 的模板，按显示尺寸展开（见下面的 art）。
 %>
-<li class="result">
-    <% if (r.artwork) { %>
-        <img src="<%= r.artwork %>" alt="" loading="lazy" width="52" height="52">
-    <% } else { %>
-        <span class="art-ph" aria-hidden="true"></span>
-    <% } %>
-    <div class="meta">
-        <div class="title"><%= r.name %></div>
-        <div class="muted small">
-            <%= r.type %> · <%= r.artistName %><% if (r.albumName) { %> · <%= r.albumName %><% } %><% if (r.trackCount) { %> · <%= r.trackCount %> 首<% } %>
-        </div>
-        <% if (r.type === "music-video") { %>
-            <div class="result-quality"><span class="q-chip atmos">MV · 视频 + 音轨</span></div>
-        <% } else if (formatsFill && (r.type === "song" || r.type === "album")) { %>
-            <div class="result-quality" data-fill-id="<%= r.id %>" data-fill-state="pending" aria-busy="true" title="正在取音质明细…">
-                <span class="sk-chip"></span><span class="sk-chip"></span>
-            </div>
-        <% } else if (r.formats && r.formats.length > 0) { %>
-            <div class="result-quality">
-                <% r.formats.slice(0, 4).forEach(function (f) { %>
-                    <span class="q-chip <%= f.hiRes ? "hires" : (f.atmos ? "atmos" : (f.lossless ? "ok" : "")) %>" title="<%= f.label %>"><%= f.detail %><% if (f.hiRes) { %> · Hi-Res<% } else if (f.atmos) { %> · Atmos<% } %></span>
-                <% }) %>
-                <% if (r.formats.length > 4) { %>
-                    <span class="q-chip">+<%= r.formats.length - 4 %></span>
-                <% } %>
-            </div>
-        <% } else if (r.type === "song" || r.type === "album") { %>
-            <div class="result-quality"><span class="q-chip">音质：未取到（wrapper-lite 没返回该曲目的播放清单）</span></div>
+<%
+const YEAR = (d) => (typeof d === "string" && /^\d{4}/.test(d) ? d.slice(0, 4) : "");
+const MINS = (ms) => (typeof ms === "number" && ms > 0
+    ? `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`
+    : "");
+/* 每个编码取规格最高的一条（formats 已按 CODEC_ORDER 排过） */
+const byCodec = {};
+(r.formats || []).forEach(function (f) {
+    const key = f.atmos ? "atmos" : f.codec === "alac" ? "alac" : (f.codec === "aac" || f.codec === "he-aac") ? "aac" : null;
+    if (key && !byCodec[key]) byCodec[key] = f;
+});
+const downloadable = r.type === "song" || r.type === "album";
+const isMV = r.type === "music-video";
+/* 引擎封顶低于该无损变体时，明确标出来 —— 界面报的是 Apple 的能力，
+   落盘的是引擎的上限，两件事都要说。 */
+const alacCeiling = ceilings && ceilings.alacMaxHz;
+const alacCapped = !!(byCodec.alac && alacCeiling && byCodec.alac.sampleRate > alacCeiling);
+/*
+ * 下载按钮上的 data-meta（标题/艺人/封面/时长/曲目数），建单时存进任务记录。
+ *
+ * 为什么手写转义而不用输出标签：那份数据是 JSON，输出标签会把双引号变成实体，
+ * 于是 JSON.parse 直接失败（静默的 —— 只是任务记录少了标题而已，很难归因）。
+ * 反过来用不转义的输出标签又会漏掉真正的 HTML 注入面（歌名里带 < 或 '）。
+ * 所以：JSON 由 stringify 保证合法，**只有**会破坏 HTML 属性的字符需要实体化，
+ * 双引号保持字面（属性本身用单引号包裹）。
+ */
+const meta = (extra) => JSON.stringify(Object.assign({
+    title: r.name, artistName: r.artistName, albumName: r.albumName, artwork: r.artwork, durationMs: r.durationMs
+}, extra || {}))
+    .replace(/&/g, "&amp;")
+    .replace(/'/g, "&#39;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+%>
+<li class="cover-card" data-id="<%= r.id %>">
+    <div class="cover-art<%= r.artwork ? "" : " no-art" %>">
+        <% if (r.artwork) { %>
+            <img src="<%= art(r.artwork, 200) %>" alt="<%= r.name %> 封面" loading="lazy" width="200" height="200">
+        <% } else { %>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>
+        <% } %>
+        <%#
+            **主下载按钮常驻封面中央**，不藏进 hover 展开层。
+
+            为什么：展开层是"补充信息"的地方（时长/年份/完整规格），
+            而下载是这个页面的**主操作**。把它藏起来有两个害处：
+              · 触屏没有 hover，等于完全没有入口；
+              · 即使鼠标用户也要先"发现"它，截图里就有人把它当成不可见。
+            展开层里保留的是 Atmos / AAC 这些**次要编码**，点主按钮不会消失。
+        %>
+        <% if (r.url && (downloadable || isMV)) { %>
+            <button class="dl dl-primary"
+                    data-url="<%= r.url %>"
+                    data-region="<%= region %>"
+                    data-codec="<%= isMV ? "mv" : "alac" %>"
+                    title="<%= isMV ? "下载音乐视频" : (byCodec.alac ? "下载 " + byCodec.alac.label : "下载 ALAC 无损") %>"
+                    data-meta='<%- meta(isMV ? { expectedTracks: r.trackCount } : (r.type === "album" ? { expectedTracks: r.trackCount } : undefined)) %>'>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+                <span><%= isMV ? "MV" : "ALAC" %></span>
+            </button>
         <% } %>
     </div>
-    <div class="actions">
-        <% if (!r.url) { %>
-            <span class="muted small">无可下载链接</span>
-        <% } else if (r.type === "music-video") { %>
-            <button class="dl" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="mv">下载 MV</button>
-        <% } else if (r.type === "song" || r.type === "album") { %>
-            <%
-                /* 每个编码取第一条：ALAC/Atmos/AAC 各按音质降序排过（见 CODEC_ORDER） */
-                const byCodec = {};
-                (r.formats || []).forEach(function (f) {
-                    if (f.atmos) {
-                        if (!byCodec.atmos) byCodec.atmos = f;
-                    } else if (f.codec === "alac") {
-                        if (!byCodec.alac) byCodec.alac = f;
-                    } else if (f.codec === "aac" || f.codec === "he-aac") {
-                        if (!byCodec.aac) byCodec.aac = f;
-                    }
-                });
+
+    <div class="cover-meta">
+        <div class="cover-title ellipsis" title="<%= r.name %>"><%= r.name %></div>
+        <div class="cover-sub ellipsis" title="<%= r.artistName %>">
+            <%= r.artistName || "—" %><% if (r.type === "song" && r.albumName) { %> · <%= r.albumName %><% } else if (r.type === "album") { %> · 专辑<% if (r.trackCount) { %> <%= r.trackCount %> 首<% } %><% } else if (r.type === "artist") { %> · 艺人<% } else if (isMV) { %> · 音乐视频<% } %>
+        </div>
+        <%# 注意不能把整个属性串拼成一个输出标签：EJS 会把其中的引号转义成实体，
+            浏览器读到的 data-fill-id 就成了乱码，search.js 的回填定位随之失效（静默失败）。 %>
+        <div class="cover-chips"<% if (formatsFill && downloadable && !isMV) { %> data-fill-id="<%= r.id %>" data-fill-state="pending" aria-busy="true"<% } %>>
+            <% if (isMV) { %>
+                <span class="q-chip atmos">MV</span>
+                <% if (ceilings && ceilings.mvMax) { %><span class="q-chip"><%= ceilings.mvMax %>p</span><% } %>
+                <% if (ceilings && ceilings.mvAudioType) { %><span class="q-chip"><%= ceilings.mvAudioType %></span><% } %>
+            <% } else if (formatsFill && downloadable) { %>
+                <span class="sk-chip"></span><span class="sk-chip"></span>
+            <% } else if (r.formats && r.formats.length > 0) { %>
+                <%#
+                    芯片只打 `f.detail`，不再额外加 "ALAC"/"Atmos"/"AAC" 前缀 ——
+                    detail 本身就是 `ALAC 无损 · 24-bit/96 kHz` 这种完整描述
+                    （见 format.ts 的 describeFormat），加前缀会渲染成
+                    "ALAC ALAC 无损 · …"。完整规格放在 title 与展开层里。
+                %>
+                <% if (byCodec.alac) { %>
+                    <span class="q-chip <%= byCodec.alac.hiRes ? "hires" : "ok" %><%= alacCapped ? " capped" : "" %>"
+                          title="<%= byCodec.alac.label %><%= alacCapped ? ` —— 但引擎 alac-max=${alacCeiling} Hz，落盘不会超过该上限` : "" %>">
+                        <%= byCodec.alac.detail %><%= alacCapped ? " · 超出引擎上限" : "" %>
+                    </span>
+                <% } %>
+                <% if (byCodec.atmos) { %><span class="q-chip atmos" title="<%= byCodec.atmos.label %>"><%= byCodec.atmos.detail %></span><% } %>
+                <% if (byCodec.aac) { %><span class="q-chip" title="<%= byCodec.aac.label %>"><%= byCodec.aac.detail %></span><% } %>
+            <% } else if (downloadable) { %>
+                <span class="q-chip">音质未取到</span>
+            <% } %>
+        </div>
+    </div>
+
+    <%# 展开层：hover 浮起、点击常驻（app.js 打 .open） %>
+    <div class="cover-detail">
+        <div class="cover-detail-in">
+            <dl class="facts">
+                <% if (MINS(r.durationMs)) { %><dt>时长</dt><dd><%= MINS(r.durationMs) %></dd><% } %>
+                <% if (YEAR(r.releaseDate)) { %><dt>发行</dt><dd><%= YEAR(r.releaseDate) %></dd><% } %>
+                <% if (r.albumName && r.type === "album") { %><dt>专辑</dt><dd class="ellipsis"><%= r.albumName %></dd><% } %>
+            </dl>
+
+            <% if (alacCapped) { %>
+                <p class="parse-result warn small">
+                    Apple 提供 <%= byCodec.alac.detail %>，但引擎的 <b>alac-max = <%= alacCeiling %> Hz</b>，
+                    实际落盘不会超过这个上限。
+                </p>
+            <% } %>
+
+            <%#
+                主下载按钮已在封面中央**常驻**，这里只放**次要编码**（Atmos / AAC）。
+                不重复给 ALAC/MV —— 同一个动作出现两个按钮，用户会怀疑哪个才对。
+                只给这一条**真的有**的编码出按钮：早先三个编码恒定渲染，
+                于是在只有 ALAC 的曲目上 Atmos/AAC 也点得动，点了必被服务端拒绝。
             %>
-            <button class="dl" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="alac" title="<%= byCodec.alac ? byCodec.alac.label : "取整轨 ALAC 无损" %>">
-                下载 ALAC<% if (byCodec.alac) { %><span class="btn-sub"><%= byCodec.alac.detail %></span><% } %>
-            </button>
-            <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="atmos" title="<%= byCodec.atmos ? byCodec.atmos.label : "取 Dolby Atmos 空间音频" %>">
-                下载 Atmos<% if (byCodec.atmos) { %><span class="btn-sub"><%= byCodec.atmos.detail %></span><% } %>
-            </button>
-            <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="aac" title="<%= byCodec.aac ? byCodec.aac.label : "取 AAC 有损" %>">
-                下载 AAC<% if (byCodec.aac) { %><span class="btn-sub"><%= byCodec.aac.detail %></span><% } %>
-            </button>
-        <% } %>
+            <% if (!r.url) { %>
+                <p class="muted small">这条记录没有可下载的链接（艺人条目只能进它的专辑/单曲页下载）。</p>
+            <% } else if (isMV || !byCodec.atmos && !byCodec.aac) { %>
+                <%# MV 与"只有 ALAC"的情况：展开层没有次要编码可给，略过 %>
+            <% } else { %>
+                <div class="cover-actions">
+                    <% if (byCodec.atmos) { %>
+                        <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="atmos" title="<%= byCodec.atmos.label %>"
+                                data-meta='<%- meta() %>'>
+                            下载 Atmos<span class="btn-sub"><%= byCodec.atmos.detail %></span>
+                        </button>
+                    <% } %>
+                    <% if (byCodec.aac) { %>
+                        <button class="dl ghost" data-url="<%= r.url %>" data-region="<%= region %>" data-codec="aac" title="<%= byCodec.aac.label %>"
+                                data-meta='<%- meta() %>'>
+                            下载 AAC<span class="btn-sub"><%= byCodec.aac.detail %></span>
+                        </button>
+                    <% } %>
+                </div>
+            <% } %>
+        </div>
     </div>
 </li>

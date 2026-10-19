@@ -1,9 +1,28 @@
 <%- include("partials/head") %>
 
-<section class="card">
-    <h1>新建下载任务</h1>
-    <p class="muted">粘贴 Apple Music 分享链接（song / album / playlist / artist），或先去<a href="/search">搜索</a>。</p>
-    <form id="job-form" class="stack">
+<%#
+  概览页。两条设计约束：
+    * 搜索与"贴链接"是同一件事的两种入口，所以并排放在最上面；
+    * 解释性文字（地区语义、自动匹配风险、歌词覆盖）全部降级为 hover 气泡，
+      只留一个 ? 标记 —— 过去这些是常驻大段文字，占了页面最宽的位置。
+%>
+<section class="card accent">
+    <div class="label">download pipeline</div>
+    <h1>新建下载</h1>
+    <div class="row">
+        <form method="get" action="/search" class="row" style="flex:1 1 320px">
+            <input name="q" placeholder="搜索歌名 / 专辑 / 艺人" aria-label="搜索 Apple Music">
+            <label class="inline-field">商店
+                <%- include("partials/region-select", {
+                    name: "region", selected: "", inheritLabel: `默认（${defaultRegionName}）`
+                }) %>
+            </label>
+            <button type="submit">搜索</button>
+        </form>
+        <button type="button" class="ghost" onclick="document.getElementById('job-url').focus()">粘贴链接</button>
+    </div>
+
+    <form id="job-form" class="stack" style="margin-top:var(--space-5)">
         <div class="row">
             <input name="url" id="job-url" placeholder="https://music.apple.com/…（粘贴后自动解析）" required>
             <button type="button" id="parse-btn" class="ghost">解析链接</button>
@@ -20,33 +39,33 @@
                     name: "region", id: "job-region", selected: "", inheritLabel: "跟随链接"
                 }) %>
             </label>
-            <label class="chk" title="目标区没有这条记录时，是否允许换用同一首歌在目标区的另一条记录">
+            <label class="chk">
                 <input type="checkbox" id="job-automatch" name="autoMatch">
-                目标区没有时自动找等价记录<span class="warn">（有下错风险）</span>
+                目标区没有时自动找等价记录
+                <span class="warn">（有下错风险）</span>
+                <span class="why right" tabindex="0">?
+                    <span class="why-body">
+                        <b>为什么需要它</b><br>
+                        同一首歌在 Apple 目录里往往有多条记录（不同年代的再版、精选集、EP），
+                        它们在目标区的标题才是当地人看到的写法。所以「目标区没有这条链接的记录」
+                        并不等于「目标区没有这首歌」。<br><br>
+                        <b>判定有多严</b><br>
+                        会在目标区搜一次，只有<b>艺人名与时长都一致</b>（±1 秒）才改用搜到的那条记录；
+                        任何一项对不上就<b>一律回退</b>到原链接。<b>不勾选则只回退，绝不替换。</b><br><br>
+                        <b>风险</b><br>
+                        同名不同版本很多（翻唱、现场版、TV size、instrumental、钢琴版…），
+                        实测在同一个搜索结果里就撞见过同名翻唱。时长与艺人是目前最可靠的两个信号，
+                        但仍不能保证 100% 正确 —— <b>换用后请到任务页确认落盘的曲目名与时长</b>，
+                        确认无误再删旧的罗马音版本。<br><br>
+                        自动匹配<b>只对单曲链接生效</b>；整张专辑/播放列表不做替换（换记录会改变任务规模）。
+                    </span>
+                </span>
             </label>
         </div>
-        <p id="region-note" class="parse-result muted small">
-            地区决定<strong>元数据取自哪个目录</strong>（也就是文件名与内嵌标签的写法：日区多为日文原名，大陆区常见英文/罗马音）。
-            音频本身是同一条记录。目标区没有这条记录时会<strong>自动回退</strong>到链接原本的地区，并在下面提示。
-        </p>
-
-        <details class="opts">
-            <summary>关于「自动找等价记录」的风险（建议先读）</summary>
-            <p class="muted small">
-                同一首歌在 Apple 目录里往往有<strong>多条记录</strong>（不同年代的再版、精选集、EP），
-                它们在目标区的标题才是当地人看到的写法。所以「目标区没有这条链接的记录」并不等于「目标区没有这首歌」。
-            </p>
-            <p class="muted small">
-                勾选后，我们会在目标区搜一次，并且<strong>只有艺人名与时长都一致</strong>（±1 秒）时才改用搜到的那条记录；
-                任何一项对不上就<strong>一律回退</strong>到原链接。<strong>不勾选则只回退，绝不替换。</strong>
-            </p>
-            <p class="warn small">
-                风险：同名不同版本很多（翻唱、现场版、TV size、instrumental、钢琴版…），实测在同一个搜索结果里就撞见过同名翻唱。
-                时长与艺人是目前最可靠的两个信号，但仍不能保证 100% 正确 ——
-                <strong>换用后请到任务页确认落盘的曲目名与时长</strong>，确认无误再删旧的罗马音版本。
-            </p>
-            <p class="muted small">注：自动匹配<strong>只对单曲链接生效</strong>；整张专辑/播放列表不做替换（换记录会改变任务规模）。</p>
-        </details>
+        <%# 地区语义：解析前先给一句常驻解释（用户还没输入任何东西），
+            解析成功后由 app.js 换成"请求什么区 → 实际什么区 + 回退原因"。
+            为什么要一直挂在这里：它是这个表单最容易误解的一项。 %>
+        <p id="region-note" class="parse-result muted small">地区决定<strong>元数据取自哪个目录</strong>（也就是文件名与内嵌标签的写法：日区多为日文原名，大陆区常见英文/罗马音）。音频本身是同一条记录。目标区没有这条记录时会<strong>自动回退</strong>到链接原本的地区。</p>
 
         <div class="row" id="download-row" hidden>
             <select name="codec" id="job-codec">
@@ -71,7 +90,6 @@
                         <option value="syllable-lyrics" <%= opts.lrcType === "syllable-lyrics" ? "selected" : "" %>>逐字（带时间轴）</option>
                     </select>
                 </label>
-                <label>附加内容
                     <select name="lrcExtra">
                         <option value="" <%= opts.lrcExtra === "" ? "selected" : "" %>>无</option>
                         <option value="translation" <%= opts.lrcExtra === "translation" ? "selected" : "" %>>翻译</option>
@@ -97,36 +115,51 @@
 
 <section class="grid">
     <div class="card">
-        <h2>队列</h2>
-        <p><span class="pill">进行中 <b><%= queue.running %></b></span> <span class="pill">等待 <b><%= queue.pending %></b></span></p>
-        <p class="muted">并发：<%= config.concurrency %> · wrapper-lite：<code><%= config.liteServer %></code></p>
+        <h2 class="card-title">队列</h2>
+        <p class="row">
+            <span class="stat"><b><%= queue.running %></b><span>进行中</span></span>
+            <span class="stat"><b><%= queue.pending %></b><span>等待</span></span>
+        </p>
+        <p class="muted small">并发 <%= config.concurrency %> · wrapper-lite <code><%= config.liteServer %></code></p>
     </div>
     <div class="card">
-        <h2>最近任务</h2>
+        <div class="head-row">
+            <h2 class="card-title">最近任务</h2>
+            <a class="muted small" href="/jobs">全部 →</a>
+        </div>
         <% if (jobs.length === 0) { %>
-            <div class="empty">还没有任务 —— 上面粘一个链接就能开始。</div>
+            <div class="empty">还没有任务</div>
         <% } else { %>
             <ul class="list">
             <% jobs.forEach(function (j) { %>
                 <li>
-                    <a href="/jobs?job=<%= j.id %>">#<%= j.id %></a>
-                    <span class="badge <%= j.status %>"><%= j.status %></span>
-                    <span class="muted"><%= j.codec %></span>
-                    <% if (j.region && j.region.fallback) { %><span class="warn small" title="<%= j.region.note %>">地区已回退</span><% } %>
-                    <span class="ellipsis"><%= j.url %></span>
+                    <span class="cover-mini<%= j.meta && j.meta.artwork ? "" : " no-art" %>">
+                        <% if (j.meta && j.meta.artwork) { %>
+                            <img src="<%= art(j.meta.artwork, 160) %>" alt="" loading="lazy" width="32" height="32">
+                        <% } %>
+                    </span>
+                    <a href="/jobs?job=<%= j.id %>" class="grow ellipsis">#<%= j.id %> <%= j.meta ? j.meta.title : "" %></a>
+                    <span class="badge <%= j.status %>" data-job-badge="<%= j.id %>"><%= statusText[j.status] %></span>
                 </li>
             <% }); %>
             </ul>
         <% } %>
     </div>
     <div class="card">
-        <h2>最近入库</h2>
+        <div class="head-row">
+            <h2 class="card-title">最近入库</h2>
+            <a class="muted small" href="/library">全部 →</a>
+        </div>
         <% if (tracks.length === 0) { %>
-            <div class="empty">还没有文件 —— 下载完成后会在这里列出。</div>
+            <div class="empty">还没有文件</div>
         <% } else { %>
             <ul class="list">
             <% tracks.forEach(function (t) { %>
-                <li><span class="ellipsis"><%= t.artist %> — <%= t.song %></span></li>
+                <li>
+                    <span class="cover-mini no-art" aria-hidden="true"></span>
+                    <span class="grow ellipsis"><%= t.artist || "—" %> — <%= t.song %></span>
+                    <% if (t.size) { %><span class="pill"><%= (t.size / 1048576).toFixed(0) %> MB</span><% } %>
+                </li>
             <% }); %>
             </ul>
         <% } %>

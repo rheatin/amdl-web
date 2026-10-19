@@ -27,8 +27,11 @@ const items = [
     ["au", "澳大利亚 au"]
 ];
 const cur = typeof selected === "string" ? selected.toLowerCase() : "";
+/* id 是可选参数：概览页的搜索框不需要它（那里只有这一个 select）。
+   必须用 typeof 判一次 —— 直接写 id 会在未传入时抛 ReferenceError。 */
+const sid = typeof id === "string" ? id : "";
 %>
-<select name="<%= name || "region" %>"<% if (id) { %> id="<%= id %>"<% } %>>
+<select name="<%= name || "region" %>"<%= sid ? ` id="${sid}"` : "" %>>
 <% items.forEach(function (it) { %>
     <option value="<%= it[0] %>"<%= cur === it[0] ? " selected" : "" %>><%= it[1] %></option>
 <% }); %>

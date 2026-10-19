@@ -3,9 +3,11 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <%# 深色-only 站点：让浏览器把地址栏 / 滚动条 / 表单控件也按深色画，避免白边 %>
-    <meta name="color-scheme" content="dark">
-    <meta name="theme-color" content="#07080e">
+    <%# 跟随系统：地址栏 / 滚动条 / 表单控件随 prefers-color-scheme 一起变。
+        之前写死 dark，浅色偏好的用户会得到深色滚动条配浅色页面。 %>
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0a0b0f" media="(prefers-color-scheme: dark)">
     <title>amdl-web</title>
     <meta name="description" content="自托管 Apple Music 下载站点 —— wrapper-lite + apple-music-dl">
     <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='9.5'%20fill='%235b7fe0'/%3E%3Ccircle%20cx='10.6'%20cy='20.7'%20r='3.7'%20fill='%230a0b10'/%3E%3Cpath%20d='M13.9%2020.1V8.9l6.9%202'%20fill='none'%20stroke='%230a0b10'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3Cpath%20d='M22.2%2013.6v5.1m0%200%202.3-2.3m-2.3%202.3-2.3-2.3'%20fill='none'%20stroke='%230a0b10'%20stroke-width='2.1'%20stroke-linecap='round'/%3E%3C/svg%3E">
@@ -15,19 +17,17 @@
 <% if (typeof user !== "undefined" && user) { %>
 <% function on(p) { return current === p ? "active" : ""; } %>
 <header class="nav">
+    <div class="nav-in">
     <%- include("brand") %>
     <nav>
+        <%#
+            导航只有三项：概览/搜索/任务已经合成一个「下载工作台」（首页）。
+            /search 与 /jobs 仍可直达（书签、深链），但不再是导航项 ——
+            导航里摆三个指向同一件事的入口，只会让人以为它们是三件事。
+        %>
         <a href="/" class="<%= on("/") %>">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-            <span>概览</span>
-        </a>
-        <a href="/search" class="<%= on("/search") %>">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-            <span>搜索</span>
-        </a>
-        <a href="/jobs" class="<%= on("/jobs") %>">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
-            <span>任务</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 20h16"/></svg>
+            <span>下载</span>
         </a>
         <a href="/library" class="<%= on("/library") %>">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>
@@ -38,10 +38,27 @@
             <span>配置</span>
         </a>
     </nav>
+    <%#
+        顶栏遥测胶囊：这是"仪表盘"视觉语言的关键 —— 导航旁边直接读出机器状态，
+        不用点进任何页面。全局中间件提供 telemetry（见 index.ts），所有页面都有。
+        running 为 0 时不点亮那个圆点：呼吸光点只该代表"真的有东西在动"。
+    %>
+    <div class="telemetry">
+        <span class="tm<%= telemetry && telemetry.running > 0 ? " live" : "" %>">
+            <span class="tm-dot" aria-hidden="true"></span>
+            <span class="tm-k">QUEUE</span>
+            <span class="tm-v"><%= telemetry ? telemetry.running : 0 %> / <%= telemetry ? telemetry.pending : 0 %></span>
+        </span>
+        <span class="tm">
+            <span class="tm-k">STOREFRONT</span>
+            <span class="tm-v"><%= telemetry ? telemetry.storefront : "—" %></span>
+        </span>
+    </div>
     <form method="post" action="/logout" class="inline">
         <%# 用户名在窄屏用 CSS 藏起来（见 app.css 的 .nav-user），只留"退出" %>
         <button class="ghost" type="submit" title="退出登录"><span class="nav-user"><%= user.username %> · </span>退出</button>
     </form>
+    </div>
 </header>
 <% } %>
 <main>

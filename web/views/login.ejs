@@ -1,10 +1,11 @@
 <%- include("partials/head") %>
+<main class="centered">
 <section class="card narrow">
     <div class="brand-block">
         <%- include("partials/brand") %>
         <p class="muted small">自托管 Apple Music 下载站点 · 无损 / Dolby Atmos / AAC</p>
     </div>
-    <h1 style="text-align:center"><%= firstRun ? "创建管理员账号" : "登录" %></h1>
+    <h1 class="center"><%= firstRun ? "创建管理员账号" : "登录" %></h1>
     <% if (error) { %><p class="err"><%= error %></p><% } %>
     <% if (firstRun) { %>
         <p class="muted small">首次运行：创建一个本机管理员账号（用户名 ≥2 字符，密码 ≥8 位）。</p>

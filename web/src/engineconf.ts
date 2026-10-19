@@ -265,6 +265,70 @@ export function lyricOptionsFromConfig(engineDir: string = config.engineDir): En
     };
 }
 
+/**
+ * 引擎的**有效音质/画质上限**，从 config.yaml 读出。
+ *
+ * 为什么必须读：界面会按 master playlist 判定 Hi-Res（位深 ≥24 且采样率 >48 kHz），
+ * 而引擎实际下到的是 `media.alac-max` 允许的那一档。两者不是一回事 ——
+ * `alac-max: 96000` 而清单里只有 96 kHz 时结果碰巧一致，
+ * 但 `alac-max: 48000` 时界面照样会标「Hi-Res 24-bit/96 kHz」，
+ * 落盘却只有 48 kHz。**界面报的是 Apple 的能力，落到硬盘上的是引擎的上限**，
+ * 两者必须同时呈现，否则就是在骗人。
+ *
+ * 注意三个键的单位各不相同，不能混：
+ *   * `alac-max`  = 采样率上限（Hz），取值 192000 / 96000 / 48000 / 44100
+ *   * `atmos-max` = 码率上限（kbps），取值 2768 / 2448
+ *   * `mv-max`    = 视频分辨率上限（纵向像素），如 2160 / 1080 / 720
+ *
+ * 读不到就是 `undefined`（= 未在 config.yaml 里写，引擎用自己的默认值），
+ * **不要**替它猜一个默认值 —— 猜错的后果是界面显示一个假的封顶值。
+ */
+export type QualityCeilings = {
+    /** ALAC 采样率上限（Hz） */
+    alacMaxHz?: number;
+    /** Dolby Atmos 码率上限（kbps） */
+    atmosMaxKbps?: number;
+    /** MV 纵向分辨率上限 */
+    mvMax?: number;
+    /** MV 音轨编码（"atmos" | "ac3" | "aac"） */
+    mvAudioType?: string;
+    /** AAC 流配置（"aac-lc" | "aac" | "aac-binaural" | "aac-downmix"） */
+    aacType?: string;
+};
+
+function pickNum(values: Record<string, string>, candidates: readonly string[]): number | undefined {
+    const raw = pickString(values, candidates);
+    if (raw === undefined) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+export function qualityCeilingsFromConfig(engineDir: string = config.engineDir): QualityCeilings {
+    const v = tryLoadEngineConfig(engineDir)?.values ?? {};
+    const out: QualityCeilings = {};
+    const alac = pickNum(v, KEYS.alacMax);
+    if (alac !== undefined) out.alacMaxHz = alac;
+    const atmos = pickNum(v, KEYS.atmosMax);
+    if (atmos !== undefined) out.atmosMaxKbps = atmos;
+    const mv = pickNum(v, KEYS.mvMax);
+    if (mv !== undefined) out.mvMax = mv;
+    const mvAudio = pickString(v, KEYS.mvAudioType);
+    if (mvAudio) out.mvAudioType = mvAudio;
+    const aac = pickString(v, KEYS.aacType);
+    if (aac) out.aacType = aac;
+    return out;
+}
+
+/**
+ * 某个无损变体是否**超出**引擎的 ALAC 采样率上限 —— 即「界面说 Hi-Res 但拿不到」。
+ *
+ * 只在两边都有数时才有话说：上限缺失（用户没配）不代表不限，
+ * 而变体缺采样率也无法判定，所以任一缺失都返回 false（不虚报风险）。
+ */
+export function exceedsAlacCeiling(f: { sampleRate?: number }, ceilings: QualityCeilings): boolean {
+    return f.sampleRate !== undefined && ceilings.alacMaxHz !== undefined && f.sampleRate > ceilings.alacMaxHz;
+}
+
 /* ------------------------------------------------------------- 覆盖与打码 */
 
 /** 覆盖值允许的类型。布尔/数字必须以**裸标量**写出，否则引擎解析成字符串会失败。 */

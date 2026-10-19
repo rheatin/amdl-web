@@ -1,0 +1,106 @@
+<%#
+  检视器（右侧常驻面板）—— 选中队列里某一条时讲它的详情。
+  对应模板里的 "Audio Stream Inspector"。
+%>
+<%
+const STATUS_TEXT = { queued: "等待", running: "实时", done: "完成", partial: "部分完成", failed: "失败", cancelled: "已取消" };
+const REGION_TEXT = {
+    none: "跟随链接",
+    same_region: "与链接一致",
+    ok: "目标区生效",
+    matched: "已自动匹配",
+    not_in_target: "目标区没有 → 已回退",
+    probe_failed: "探测失败 → 已回退",
+    unprobed: "未预检（按目标区执行）",
+    rewrite_failed: "改写失败 → 原链接"
+};
+const m = selected && selected.meta;
+const p = (selected && selected.progress) || { done: 0, total: 1, currentPct: 0, pct: 0, title: "", spec: "", rate: "" };
+const active = Boolean(selected) && (selected.status === "queued" || selected.status === "running");
+const expected = (m && m.expectedTracks) || p.total || 1;
+const landed = selected ? (selected.tracks || []).length : 0;
+const totalBytes = selected ? (selected.tracks || []).reduce(function (a, t) { return a + (t.size || 0); }, 0) : 0;
+const sum = selected && selected.summary;
+const MB = (b) => (b ? (b / 1048576).toFixed(1) + " MB" : "—");
+const MINS = (ms) => (ms ? Math.floor(ms / 60000) + ":" + String(Math.floor((ms / 1000) % 60)).padStart(2, "0") : "");
+%>
+<section class="card accent" id="inspector">
+    <div class="head-row">
+        <h2 class="card-title" style="font-size:var(--text-md)">检视器</h2>
+        <span class="label" id="inspector-state">
+            <%= selected ? (STATUS_TEXT[selected.status] || selected.status) : "未选中" %>
+        </span>
+    </div>
+
+    <% if (!selected) { %>
+        <div class="empty">从左侧队列选一条，这里显示它的详情。</div>
+    <% } else { %>
+        <div class="insp-track">
+            <span class="insp-art">
+                <% if (m && m.artwork) { %>
+                    <img src="<%= art(m.artwork, 300) %>" alt="<%= m.title %> 封面" width="300" height="300">
+                <% } %>
+            </span>
+            <div class="insp-info">
+                <div class="insp-title"><%= m && m.title ? m.title : linkLabel(selected.url) %></div>
+                <div class="muted small ellipsis" title="<%= selected.url %>">
+                    <%= m && m.artistName ? m.artistName : "#" + selected.id %>
+                </div>
+                <div class="cover-chips">
+                    <span class="q-chip"><%= selected.codec %></span>
+                    <% if (m && m.durationMs) { %><span class="q-chip"><%= MINS(m.durationMs) %></span><% } %>
+                    <% if (active && p.spec) { %><span class="q-chip ok"><%= p.spec %></span><% } %>
+                </div>
+            </div>
+        </div>
+
+        <div class="spec-grid">
+            <div class="spec-cell">
+                <div class="spec-k">已落盘</div>
+                <div class="spec-v"><%= landed %>/<%= expected %></div>
+            </div>
+            <div class="spec-cell">
+                <div class="spec-k">体积</div>
+                <div class="spec-v"><%= MB(totalBytes) %></div>
+            </div>
+            <div class="spec-cell">
+                <div class="spec-k">警告</div>
+                <div class="spec-v <%= sum && sum.warnings > 0 ? "warn" : "" %>"><%= sum ? sum.warnings : "—" %></div>
+            </div>
+            <div class="spec-cell">
+                <div class="spec-k">错误</div>
+                <div class="spec-v <%= sum && sum.errors > 0 ? "err" : "" %>"><%= sum ? sum.errors : "—" %></div>
+            </div>
+        </div>
+
+        <% if (selected.error) { %>
+            <p class="<%= (selected.status === 'partial' || selected.status === 'cancelled') ? 'warn' : 'err' %> small" id="inspector-error"><%= selected.error %></p>
+        <% } else { %>
+            <p class="err small" id="inspector-error" hidden></p>
+        <% } %>
+
+        <details class="opts">
+            <summary>元数据地区与选项</summary>
+            <% if (selected.region) { %>
+                <% const r = selected.region;
+                   const bad = r.fallback || r.reason === "probe_failed" || r.reason === "rewrite_failed"; %>
+                <dl class="kv">
+                    <dt>地区</dt>
+                    <dd>
+                        <%= r.requested || "跟随链接" %> → <%= r.effective || "—" %>
+                        <span class="badge <%= bad ? 'partial' : 'done' %>"><%= REGION_TEXT[r.reason] || r.reason %></span>
+                    </dd>
+                </dl>
+                <p class="<%= bad ? 'warn' : 'muted' %> small"><%= r.note %></p>
+            <% } else { %>
+                <p class="muted small">无地区覆盖（按链接自带商店）。</p>
+            <% } %>
+            <% const ovr = Object.keys(selected.options || {}); %>
+            <p class="muted small">本次覆盖：<%= ovr.length ? ovr.join(" · ") : "无（按 config.yaml）" %></p>
+            <p class="muted small"><a class="link" href="/jobs/<%= selected.id %>/config">查看本任务的 config.yaml</a></p>
+        </details>
+
+        <h3 class="label" style="margin-top:var(--space-5)">引擎输出</h3>
+        <pre id="console" data-job="<%= selected.id %>"></pre>
+    <% } %>
+</section>

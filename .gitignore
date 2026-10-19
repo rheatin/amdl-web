@@ -16,3 +16,10 @@ web/dist/
 
 # npm 缓存（在受限环境里把缓存指到仓库内时会产生，别提交）
 .npm-cache/
+
+# 设计预览：一次性工具 + 截图 + 无头浏览器缓存，不属于产品代码
+.preview/
+
+# 单测运行时产生的临时目录（DATA_DIR 被指到仓库内时出现）
+web/amdl-web-cover-*/
+web/data/

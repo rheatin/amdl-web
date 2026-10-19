@@ -35,8 +35,13 @@ let srQ = "";
 let srRegionText = "";
 
 if (srForm && srInput && srResults && srList) {
-    /* 每张卡片/每次回填渲染后，还有没有没回填的骨架？用来判断"完成"该说什么 */
-    const pendingFills = () => document.querySelectorAll('.result-quality[data-fill-state="pending"]').length;
+    /*
+     * 每张卡片/每次回填渲染后，还有没有没回填的骨架？用来判断"完成"该说什么。
+     * 选择器跟着封面卡的类名走（.cover-chips / [data-fill-state]）——
+     * 卡片从「一行结果」改成「封面卡」时这里必须同步改，否则永远数到 0 个 pending，
+     * 「完成」会立刻报出来，用户看到的还是骨架。
+     */
+    const pendingFills = () => document.querySelectorAll('.cover-chips [data-fill-state="pending"]').length;
 
     /* 已经到达、但对应的卡片还没插进 DOM 的回填（同一条 TCP 分片里的 fill 先于 card） */
     const earlyFills = new Map();
@@ -55,14 +60,14 @@ if (srForm && srInput && srResults && srList) {
     }
 
     function applyFill(id, html) {
-        const box = document.querySelector(`.result-quality[data-fill-id="${id}"]`);
+        const box = document.querySelector(`.cover-chips[data-fill-id="${id}"]`);
         if (!box) {
             earlyFills.set(id, html);
             return;
         }
         const tpl = document.createElement("template");
         tpl.innerHTML = html.trim();
-        const fresh = tpl.content.querySelector(".result-quality");
+        const fresh = tpl.content.querySelector(".cover-chips");
         if (fresh) {
             box.innerHTML = fresh.innerHTML;
             /* 骨架标记要撤掉：不留 data-fill-state 与 aria-busy，免得样式继续压暗 */

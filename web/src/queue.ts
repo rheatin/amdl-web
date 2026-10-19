@@ -2,11 +2,19 @@ import { EventEmitter } from "node:events";
 import { config } from "./config.js";
 import { applyFileModes } from "./filemode.js";
 import { discoverLandedTracks } from "./landed.js";
+import { createProgressTracker, withPct, type Progress } from "./progress.js";
 import { rip } from "./ripper.js";
 import { store, type Job, type JobStatus } from "./store.js";
 
 export type JobEvent =
     | { type: "log"; line: string; at: number }
+    /**
+     * 实时进度。引擎**没有**进度接口，只能从它逐行打印的文本里解析
+     * （见 progress.ts），所以这个事件是 log 流的副产品。
+     * 单独广播而不是让前端自己解析：进度规则要只有一份实现，且
+     * 存量任务的进度要能靠 job.log 回填（见 progressFromLog）。
+     */
+    | { type: "progress"; progress: Progress; at: number }
     | { type: "status"; status: JobStatus; error?: string; tracks?: number; at: number };
 
 const bus = new EventEmitter();
@@ -92,9 +100,28 @@ async function execute(jobId: number): Promise<void> {
     store.updateJob(jobId, { status: "running", startedAt, error: undefined, tracks: [], log: [] });
     emit(jobId, { type: "status", status: "running", at: Date.now() });
 
+    /*
+     * 进度解析器挂在 say 上：引擎的每一行输出都过一次解析器，
+     * 于是进度条能随下载实时前进，而不需要引擎提供任何进度接口。
+     *
+     * 广播做了节流：引擎刷新进度条时每秒能推十几行（而且常是同一首的 8%、17%、26%），
+     * 逐行广播会把 SSE 通道刷爆。所以只在**读数真的变了**时才发，
+     * 且两次之间至少隔 200ms —— 视觉上无差别，事件量降一个数量级。
+     */
+    const tracker = createProgressTracker();
+    let lastPct = -1;
+    let lastSentAt = 0;
     const say = (line: string): void => {
         store.appendLog(jobId, line);
         emit(jobId, { type: "log", line, at: Date.now() });
+
+        const p = withPct(tracker.feed(line));
+        const now = Date.now();
+        if (p.pct !== lastPct && now - lastSentAt >= 200) {
+            lastPct = p.pct;
+            lastSentAt = now;
+            emit(jobId, { type: "progress", progress: p, at: now });
+        }
     };
 
     const result = await rip(job, say, controller.signal);
@@ -150,7 +177,11 @@ async function execute(jobId: number): Promise<void> {
         status,
         finishedAt: Date.now(),
         error,
-        tracks
+        tracks,
+        // 汇总落库（而不是只打一行日志）：任务页要能直接显示「完成 6/7 · 1 个错误」，
+        // 不该要求用户去翻控制台。只在引擎真打印了这行时才写 ——
+        // 崩溃退出没有汇总，写一个全 0 的假汇总比没有更误导。
+        ...(result.summary ? { summary: result.summary } : {})
     });
     store.flush();
     emit(jobId, { type: "status", status, error, tracks: tracks.length, at: Date.now() });

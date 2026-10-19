@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from "express";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { coverBeside, saveDirs } from "./landed.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -42,9 +43,16 @@ import { config, language, storefront } from "./config.js";
 import { explicitJobOptions } from "./jobopts.js";
 import { cancelJob, enqueue, isActive, queueDepth, reconcileOnBoot, subscribe } from "./queue.js";
 import { resolveRegionPlan, regionLabel, type RegionDeps, type RegionPlan } from "./region.js";
-import { engineConfigPath, removeJobConfigDir } from "./ripper.js";
-import { lyricOptionsFromConfig, maskConfigText, SECRET_KEYS, tryLoadEngineConfig } from "./engineconf.js";
-import { store } from "./store.js";
+import { progressFromLog } from "./progress.js";
+import { engineConfigPath, jobConfigDir, removeJobConfigDir } from "./ripper.js";
+import {
+    lyricOptionsFromConfig,
+    maskConfigText,
+    qualityCeilingsFromConfig,
+    SECRET_KEYS,
+    tryLoadEngineConfig
+} from "./engineconf.js";
+import { sanitizeJobMeta, store } from "./store.js";
 import { normalizeRegion, parseAppleMusicUrl } from "./urlinfo.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -58,11 +66,64 @@ app.disable("x-powered-by");
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({ limit: "64kb" }));
 app.use("/static", express.static(path.join(here, "..", "public")));
+
 app.use(attachUser);
+
+/*
+ * 封面：只服务**音频文件所在目录下的 cover.jpg**。
+ *
+ * 为什么不直接 express.static(MUSIC_DIR)：那等于把整个音乐目录（含所有音频）
+ * 变成 HTTP 可读，而这个站点大概率挂在公网/反代后面 —— 音频文件通常几十上百 MB，
+ * 不该被随手拖走。所以这里只认「一个曲目的 path」这一种输入，
+ * 且必须先确认它落在引擎的落盘目录里（saveDirs()，见 landed.ts）。
+ *
+ * 三重限制，缺一不可：
+ *   1. 路径必须解析到某个已知落盘目录之下（含目录判定，防 ../ 穿越）
+ *   2. 文件名固定为 cover.jpg，不接受用户指定的文件名
+ *   3. 必须登录
+ * 即便如此仍然只暴露封面本身，不暴露同名目录里的其它文件。
+ */
+app.get("/api/cover", requireAuth, (req: Request, res: Response) => {
+    const raw = String(req.query["path"] ?? "");
+    if (!raw) {
+        res.status(400).json({ error: "missing path" });
+        return;
+    }
+    const resolved = path.resolve(raw);
+    const roots = saveDirs().map((d) => path.resolve(d));
+    // 包含性判定：必须是某个落盘目录的真子路径（目录本身不算）
+    const inside = roots.some((r) => resolved.startsWith(r + path.sep));
+    if (!inside) {
+        res.status(404).json({ error: "not found" });
+        return;
+    }
+    const file = coverBeside(resolved);
+    if (!file) {
+        res.status(404).json({ error: "no cover" });
+        return;
+    }
+    res.sendFile(file, { maxAge: "1h" }, (err) => {
+        if (err && !res.headersSent) res.status(404).json({ error: "not found" });
+    });
+});
 
 // 供视图高亮当前导航项
 app.use((req: Request, res: Response, next) => {
     res.locals.current = req.path;
+    next();
+});
+
+// 顶栏的遥测胶囊（队列 / wrapper 后端 / 商店）要在**每个页面**都拿得到，
+// 所以挂在全局而不是逐个 render 里传 —— 漏一个页面顶栏就少一块。
+// 顺带把 engineDir 这类部署信息也放进来：顶栏是"这台机器现在什么状态"的最短路径。
+app.use((_req: Request, res: Response, next) => {
+    const q = queueDepth();
+    res.locals.telemetry = {
+        running: q.running,
+        pending: q.pending,
+        storefront: storefront(),
+        liteServer: config.liteServer
+    };
     next();
 });
 
@@ -169,6 +230,57 @@ async function attachFormats(cap: TrackCapability, storefrontOverride?: string):
     }
 }
 
+/* ------------------------------------------------------------ 视图辅助函数 */
+
+/**
+ * 封面模板展开（视图里叫 `art`）。
+ *
+ * 为什么由服务端注入、而不是做成一个 EJS partial 让各视图 include：
+ * EJS 把每个模板编译成**独立函数**，`const` 声明不会带回调用方
+ * （实测连往 locals 上赋值也带不回来，include 只单向向下可见），
+ * 所以"抽一个 partial 出来共享"在 EJS 里根本做不到。
+ * 而这个项目刻意不引入构建步骤把视图与 TS 拼在一起。
+ * 于是规则**只存在这一处**，视图通过局部量拿到它 —— 没有第二份，也就没有漂移。
+ *
+ * 模板形状实测有四种（见 ampmusic.ts 的 artworkAt），只认一种的话另外三种会
+ * 产出 404 的 URL，而 <img> 加载失败不产生任何控制台错误。
+ */
+const ART_TEMPLATE_RE = /\{w\}x\{h\}(?:bb|dd|cc)?(?:\.\w+|\{f\})?/;
+const art = (tpl: string, size: number): string =>
+    tpl && tpl.includes("{w}") ? tpl.replace(ART_TEMPLATE_RE, `${size}x${size}bb.jpg`) : tpl || "";
+
+/*
+ * 挂到 app 级 locals，让**所有视图**都能拿到。
+ * 逐个 render 传是不可靠的：漏一处，那张封面就是 404，
+ * 而 <img> 加载失败不会在控制台报错，只是图不见了。
+ */
+app.locals.art = art;
+
+/*
+ * 把 Apple 链接变成一句人能读的标签：`周杰伦-muliebritty · 677907037`。
+ *
+ * 为什么需要：JobMeta 是后加的字段，历史任务记录里没有标题/艺人。
+ * 它们的 URL 带百分号编码（`%E5%91%A8%E6%9D%B0%E4%BC%A6`），直接当标题会让
+ * 整页变成一堆乱码 —— 这正是重构前的老毛病。
+ *
+ * 只用于**展示**：引擎只认 URL，返回值不参与任何行为判断。
+ * 放在这里（由 app.locals 注入）而不是各视图各写一份，是因为检视器与队列行都要用；
+ * 与 art 一样，避免两处副本漂移。
+ */
+app.locals.linkLabel = (u: string): string => {
+    try {
+        const parts = new URL(u).pathname.split("/").filter(Boolean);
+        // /cn/album/名字/1465693512?i=… → 第 2 段是中文名，第 3 段是 id
+        const name = parts[2] ? decodeURIComponent(parts[2]) : "";
+        const id = parts[3] || parts[parts.length - 1] || "";
+        if (name && id) return `${name} · ${id}`;
+        return name || id || u;
+    } catch {
+        return u;
+    }
+};
+
+
 /* ------------------------------------------------------------ 流式搜索结果 */
 
 /**
@@ -179,12 +291,13 @@ async function attachFormats(cap: TrackCapability, storefrontOverride?: string):
  * 抄第二遍，改一处漏一处。
  */
 function renderPartial(res: Response, name: string, locals: Record<string, unknown>): Promise<string> {
-    return new Promise((resolve, reject) => {
-        res.render(name, { ...locals, config }, (err: Error | null, html?: string) => {
-            if (err) reject(err);
-            else resolve(html ?? "");
-        });
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    // art 必须显式传：视图里的 <img src> 直接调 art(...)，而 EJS 拿不到模块作用域里的函数
+    res.render(name, { ...locals, config, art }, (err: Error | null, html?: string) => {
+        if (err) reject(err);
+        else resolve(html ?? "");
     });
+    return promise;
 }
 
 /**
@@ -268,11 +381,15 @@ async function streamSearchResults(req: Request, res: Response, q: string, regio
         if (!alive) return;
         write({ type: "total", total: items.length });
 
+        // ceilings 要一起传：卡片要用它判断"Apple 有 Hi-Res 但引擎封顶更低"，
+        // 流式回填的卡片与首屏渲染的卡片必须给出同一个结论。
+        const ceilings = qualityCeilingsFromConfig();
         const fillHtml = async (r: (typeof items)[number], formats: AudioFormatView[]): Promise<string> =>
             renderPartial(res, "partials/result-item", {
                 r: { ...r, formats },
                 region,
-                formatsFill: false
+                formatsFill: false,
+                ceilings
             });
 
         // 阶段一：目录结果先全部落地（骨架），顺序与目录返回一致
@@ -280,7 +397,7 @@ async function streamSearchResults(req: Request, res: Response, q: string, regio
             if (!alive) return;
             let html = "";
             try {
-                html = await renderPartial(res, "partials/result-item", { r, region, formatsFill: true });
+                html = await renderPartial(res, "partials/result-item", { r, region, formatsFill: true, ceilings });
             } catch {
                 html = "";
             }
@@ -376,12 +493,30 @@ app.post("/logout", (req: Request, res: Response) => {
     res.redirect("/login");
 });
 
-app.get("/", requireAuth, (_req: Request, res: Response) => {
-    res.render("index", {
-        jobs: store.jobs().slice(-8).reverse(),
-        tracks: store.allTracks().slice(0, 8),
-        queue: queueDepth(),
-        // 表单里的歌词控件按 config.yaml 预填 —— 用户看到的就是真正生效的值
+/*
+ * 工作台（默认首页）—— 单屏完成「输入 → 排队 → 看进度 → 看详情」。
+ *
+ * 每条任务都带上 progress：运行中的会由 SSE 实时推进，
+ * 已结束的用 job.log 回填（见 progressFromLog），所以首次加载也有进度条。
+ *
+ * 队列默认**全部展开且不限条数**：这是一台自托管的下载机，
+ * 任务总数在两位数量级；真正的筛选交给前端的页签（客户端过滤，见 app.js），
+ * 服务端不截断 —— 否则"我明明有 102 个任务，列表里只有 8 个"会很困惑。
+ */
+app.get("/", requireAuth, (req: Request, res: Response) => {
+    const jobs = store.jobs().slice().reverse().map((j) => ({ ...j, progress: progressFromLog(j.log) }));
+    const activeCount = jobs.filter((j) => j.status === "queued" || j.status === "running").length;
+    const finishedCount = jobs.length - activeCount;
+    const selId = Number(req.query["job"]);
+    const selected = (Number.isFinite(selId) ? store.job(selId) : undefined) ?? jobs[0] ?? null;
+    res.render("workbench", {
+        jobs,
+        selected,
+        activeCount,
+        finishedCount,
+        defaultRegionName: regionLabel(storefront()),
+        statusText: { queued: "等待", running: "进行中", done: "完成", partial: "部分完成", failed: "失败", cancelled: "已取消" },
+        ceilings: qualityCeilingsFromConfig(),
         opts: lyricOptionsFromConfig(),
         config
     });
@@ -430,15 +565,27 @@ app.get("/search", requireAuth, async (req: Request, res: Response) => {
         // regionName = 本次实际搜索的商店，defaultRegionName = 配置里的默认商店
         regionName: regionLabel(region || storefront()),
         defaultRegionName: regionLabel(storefront()),
+        ceilings: qualityCeilingsFromConfig(),
         config
     });
 });
 
-app.get("/jobs", requireAuth, (_req: Request, res: Response) => {
-    const jobs = store.jobs().slice().reverse();
-    const id = Number(_req.query["job"]);
-    const selected = Number.isFinite(id) ? store.job(id) : jobs[0];
-    res.render("jobs", { jobs, selected: selected ?? null, queue: queueDepth(), config });
+/*
+ * /jobs → 工作台。
+ *
+ * 这一页原本是"任务列表 + 右栏详情"的双栏页，但它与工作台**讲的是同一件事**，
+ * 只是老版布局。既然界面已经合成单屏，留着两个入口只会让人以为它们是两种视图。
+ * 所以这里做 302 而不是删路由：书签、旧消息、深链都还能用，
+ * 带 ?job=<id> 的链接会正确落到那条任务的检视器上。
+ */
+app.get("/jobs", requireAuth, (req: Request, res: Response) => {
+    const id = Number(req.query["job"]);
+    if (Number.isFinite(id)) {
+        const job = store.job(id);
+        res.redirect(job ? `/?job=${job.id}` : "/");
+        return;
+    }
+    res.redirect("/");
 });
 
 app.get("/library", requireAuth, (_req: Request, res: Response) => {
@@ -458,6 +605,7 @@ app.get("/settings", requireAuth, (_req: Request, res: Response) => {
         config,
         queue: queueDepth(),
         storefront: storefront(),
+        ceilings: qualityCeilingsFromConfig(),
         language: language(),
         engineFile: engine?.file ?? engineConfigPath(),
         engineText: engine ? maskConfigText(engine.text) : null,
@@ -531,8 +679,20 @@ app.get("/api/search", requireAuth, async (req: Request, res: Response) => {
     }
 });
 
+/*
+ * 任务列表 —— 工作台的队列区直接吃这份数据。
+ *
+ * 每条都带上 `progress`：运行中的任务由 SSE 实时推进，
+ * 而**已结束**的任务没有任何实时事件，所以这里用 job.log 回填一次
+ * （见 progressFromLog）—— 于是「刚刷新页面进度条就空了」这个老问题不存在了。
+ *
+ * 代价是每个任务都要重扫一遍日志。日志上限是 config.logLines（默认 2000 行），
+ * 任务数量通常在两位数，扫描量很小；真要担心就在这里加个按任务缓存，
+ * 但那会引入"缓存何时失效"的另一套问题，收益不抵复杂度。
+ */
 app.get("/api/jobs", requireAuth, (_req: Request, res: Response) => {
-    res.json({ jobs: store.jobs(), queue: queueDepth() });
+    const jobs = store.jobs().map((j) => ({ ...j, progress: progressFromLog(j.log) }));
+    res.json({ jobs, queue: queueDepth() });
 });
 
 /* --------------------------------------------------------- 配置（只读接口） */
@@ -563,6 +723,8 @@ app.get("/api/config", requireAuth, (_req: Request, res: Response) => {
             language: language(),
             tz: process.env["TZ"] ?? ""
         },
+        // 有效音质/画质上限：界面要能说清「Apple 有 Hi-Res」与「引擎只下到 48 kHz」的区别。
+        ceilings: qualityCeilingsFromConfig(),
         engineConfig: {
             file: engine?.file ?? engineConfigPath(),
             present: engine !== null,
@@ -667,6 +829,10 @@ app.get("/api/codecs", requireAuth, async (req: Request, res: Response) => {
                 title: mv?.name ?? "",
                 artist: mv?.artistName ?? "",
                 album: mv?.albumName ?? "",
+                artwork: mv?.artwork ?? "",
+                // MV 的画质/音轨上限也要给：引擎按 mv-max / mv-audio-type 下，
+                // 界面只印「MV · 视频 + 音轨」等于没告诉用户会拿到什么。
+                ceilings: qualityCeilingsFromConfig(),
                 summary: "音乐视频（MV）",
                 source: "音乐视频",
                 resolved: link,
@@ -679,6 +845,8 @@ app.get("/api/codecs", requireAuth, async (req: Request, res: Response) => {
                 musicVideo: true,
                 summary: "音乐视频（MV）",
                 note: `未能取到视频信息（${err instanceof Error ? err.message : String(err)}），仍可直接下载`,
+                artwork: "",
+                ceilings: qualityCeilingsFromConfig(),
                 resolved: link,
                 plan
             });
@@ -697,6 +865,8 @@ app.get("/api/codecs", requireAuth, async (req: Request, res: Response) => {
                 codecs: [...ALL_CODECS],
                 formats: await formatsFor(probeId),
                 note: link.note ?? `Apple 未返回该${link.kind}的能力信息`,
+                artwork: "",
+                ceilings: qualityCeilingsFromConfig(),
                 resolved: link,
                 plan
             });
@@ -711,6 +881,8 @@ app.get("/api/codecs", requireAuth, async (req: Request, res: Response) => {
             title: withQuality.name,
             artist: withQuality.artistName,
             album: withQuality.albumName,
+            artwork: withQuality.artwork,
+            ceilings: qualityCeilingsFromConfig(),
             formats: withQuality.formats.map(presentFormat),
             resolved: link,
             plan
@@ -719,6 +891,8 @@ app.get("/api/codecs", requireAuth, async (req: Request, res: Response) => {
         res.json({
             codecs: [...ALL_CODECS],
             note: `查询能力失败：${err instanceof Error ? err.message : String(err)}`,
+            artwork: "",
+            ceilings: qualityCeilingsFromConfig(),
             resolved: link,
             plan
         });
@@ -788,7 +962,8 @@ app.post("/api/jobs", requireAuth, async (req: Request, res: Response) => {
     // 未给出的键一律不写进任务配置 → 引擎用 config.yaml 的值
     const options = explicitJobOptions(req.body?.options);
     const plan = await planRegion(url, regionGiven, req.body?.autoMatch === true);
-    const job = store.addJob(user.id, plan.effectiveUrl, codec, options, plan);
+    const meta = sanitizeJobMeta(req.body?.meta);
+    const job = store.addJob(user.id, plan.effectiveUrl, codec, options, plan, meta);
     enqueue(job);
     res.status(201).json({ job });
 });
@@ -814,7 +989,8 @@ app.post("/api/jobs/:id/retry", requireAuth, (req: Request, res: Response) => {
         return;
     }
     const user = res.locals.user as { id: number };
-    const job = store.addJob(user.id, src.url, src.codec, src.options ?? {}, src.region);
+    // 元数据也一起克隆：重试出来的任务不该退回成「只有一条裸 URL」。
+    const job = store.addJob(user.id, src.url, src.codec, src.options ?? {}, src.region, src.meta);
     enqueue(job);
     res.status(201).json({ job });
 });
@@ -856,6 +1032,35 @@ app.delete("/api/jobs/:id", requireAuth, (req: Request, res: Response) => {
     store.deleteJob(id);
     removeJobConfigDir(id);
     res.json({ ok: true });
+});
+
+/**
+ * 查看某个任务**实际使用的**引擎配置（只读页面）。
+ *
+ * 为什么值得单独开一条路由：这个文件是「基础 config.yaml + 本任务的显式覆盖」
+ * 叠加出来的产物（见 ripper.writeJobConfig），也就是"这次下载到底按什么跑"的唯一准确答案。
+ * 它随任务记录长期存在，但之前除了删除任务时顺手清掉以外从不出现在界面上 ——
+ * 于是「我明明改了 config.yaml，为什么这次不是 Hi-Res」只能靠猜。
+ *
+ * 只读，且只读这一个固定文件名：路径由 jobConfigDir 拼出，不接受任何用户输入。
+ * 凭据照常打码（引擎配置里有 Apple 媒体 token）。
+ */
+app.get("/jobs/:id/config", requireAuth, (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    const job = store.job(id);
+    if (!job) {
+        res.status(404).send("没有这个任务");
+        return;
+    }
+    const file = path.join(jobConfigDir(id), "config.yaml");
+    let text = "";
+    try {
+        text = maskConfigText(fs.readFileSync(file, "utf8"));
+    } catch {
+        // 任务刚建完还没起进程、或记录已被清理：明确说"还没有"，不要假装配置是空的。
+        text = "# 这份配置还没有生成（任务尚未启动，或任务记录已被清理）。";
+    }
+    res.render("job-config", { job, file, text, ceilings: qualityCeilingsFromConfig(), config });
 });
 
 /**

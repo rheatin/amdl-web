@@ -1,0 +1,79 @@
+<%#
+  一条队列行（一个下载任务）。
+
+  进度条的语义（别改错）：
+    · 运行中 —— 宽度来自 progress.pct，实时推进
+    · 完成   —— 满条
+    · 部分完成 / 失败 —— 按**实际落盘数 / 预期数**算，不满条
+      （早先的版本在失败时也画满，用户去检查会发现少了一首，界面在骗人）
+%>
+<%
+const m = j.meta;
+const p = progress || { done: 0, total: 1, currentPct: 0, pct: 0, title: "", spec: "", rate: "", elapsed: "", finished: false };
+/*
+ * 老任务的显示降级：JobMeta 是后来才加的字段，历史记录里没有标题/艺人/封面。
+ * 它们的 URL 带百分号编码，直接当标题会把整页变成乱码（重构前的老毛病）。
+ *
+ * 标签由 linkLabel() 生成 —— 它挂在 server 的 app.locals 上（见 index.ts 的注释），
+ * 检视器也要用同一份；这里**不再另写一份**，两处副本必然漂移。
+ */
+const rowTitle = m && m.title ? m.title : (j.url ? linkLabel(j.url) : "#" + j.id);
+const active = j.status === "queued" || j.status === "running";
+const expected = (m && m.expectedTracks) || p.total || 1;
+const landed = (j.tracks || []).length;
+const sum = j.summary;
+
+const barState = active ? "run" : (j.status === "done" ? "ok" : ((j.status === "partial" || j.status === "failed") ? "bad" : "idle"));
+const landedPct = expected > 0 ? Math.round((landed / expected) * 100) : 0;
+const barPct = active ? p.pct : (barState === "ok" ? 100 : Math.min(100, Math.max(landedPct, sum ? Math.round((sum.completed / sum.total) * 100) : 0)));
+
+// 状态标签的配色：沿用语义色，但 partial 用琥珀（"部分完成"不是失败也不是完成）
+const TAG_CLASS = { done: "ok", partial: "hires", failed: "", cancelled: "", queued: "", running: "" };
+%>
+<li class="qrow" role="option" tabindex="0" data-qrow="<%= j.id %>" data-status="<%= j.status %>"
+    aria-selected="<%= selected && selected.id === j.id ? "true" : "false" %>">
+    <span class="qrow-art<%= active ? " busy" : "" %>">
+        <% if (m && m.artwork) { %>
+            <img src="<%= art(m.artwork, 160) %>" alt="" loading="lazy" width="56" height="56">
+        <% } %>
+        <% if (j.status === "done") { %><span class="tick" aria-hidden="true">✓</span><% } %>
+    </span>
+
+    <div class="qrow-body">
+        <div class="qrow-head">
+            <span class="qrow-title" title="<%= j.url %>"><%= rowTitle %></span>
+            <span class="tag <%= TAG_CLASS[j.status] || "" %>"><%= statusText[j.status] || j.status %></span>
+            <% if (active && p.spec) { %><span class="q-chip"><%= p.spec %></span><% } %>
+        </div>
+
+        <div class="qrow-sub">
+            <% if (m && (m.artistName || m.albumName)) { %><%= m.artistName || "—" %><% if (m.albumName) { %> · <%= m.albumName %><% } %><% } else { %>#<%= j.id %> · <%= new Date(j.createdAt || Date.now()).toLocaleDateString() %><% } %>
+        </div>
+
+        <div class="pbar <%= barState %>"><i style="width:<%= Math.max(2, barPct) %>%"></i></div>
+
+        <div class="qrow-meta">
+            <span class="qrow-pct <%= barState === "run" ? "live" : (barState === "ok" ? "ok" : (barState === "bad" ? "bad" : "")) %>">
+                <% if (active) { %><%= barPct %>%<% } else { %><%= landed %>/<%= expected %><% } %>
+            </span>
+            <% if (active && p.title) { %>
+                <span class="qrow-current ellipsis" title="<%= p.title %>">· <%= p.title %></span>
+            <% } else if (sum && (sum.warnings > 0 || sum.errors > 0)) { %>
+                <% if (sum.warnings > 0) { %><span class="warn">警告 <%= sum.warnings %></span><% } %>
+                <% if (sum.errors > 0) { %><span class="err">错误 <%= sum.errors %></span><% } %>
+            <% } %>
+            <span class="grow"></span>
+            <% if (active && p.rate) { %><span class="muted"><%= p.rate %></span><% } %>
+            <span class="q-chip"><%= j.codec %></span>
+        </div>
+    </div>
+
+    <div class="qrow-ops">
+        <% if (active) { %>
+            <button class="ghost tiny" type="button" data-cancel="<%= j.id %>" title="取消这个任务">取消</button>
+        <% } else { %>
+            <button class="ghost tiny" type="button" data-retry="<%= j.id %>" title="重试（已下载的会被引擎跳过，只补失败的那几首）">重试</button>
+            <button class="icon-btn" type="button" data-del="<%= j.id %>" title="删除这条任务记录（不动已下载的文件）" aria-label="删除任务记录 <%= j.id %>">×</button>
+        <% } %>
+    </div>
+</li>

@@ -115,25 +115,39 @@ try {
     });
 
     /* ------------------------------------------- 2. 页面上的按钮按状态分岔 */
-    await check("列表：活任务给「取消」、已结束的给「删除」、并有「清空已结束」", async () => {
-        const html = await (await call("GET", "/jobs")).text();
+    /*
+     * 注意：任务界面已经并入单屏工作台（GET /），/jobs 现在是 302 跳转。
+     * 所以这里断言的是**工作台页面**上的按钮 —— 那是按钮真正所在的地方。
+     * 下面另有一条专门盯 302 跳转的用例（见文件末尾）。
+     */
+    await check("队列：活任务给「取消」、已结束的给「删除」，并有「清空已结束」", async () => {
+        const html = await (await call("GET", "/")).text();
+        // 上面的取消用例把 queued / running 两条都变成了 cancelled
+        assert.ok(!html.includes(`data-cancel="${queued.id}"`), "已取消的任务不该再给取消按钮");
         assert.ok(!html.includes(`data-cancel="${running.id}"`), "已取消的任务不该再给取消按钮");
         assert.ok(html.includes(`data-del="${done.id}"`), "已结束的任务应该有删除按钮");
         assert.ok(html.includes("data-clear-finished"), "有已结束任务时应该出现「清空已结束」");
     });
 
-    await check("列表：还在排队的任务给的是「取消」而不是「删除」", async () => {
+    await check("队列：还在排队的任务给的是「取消」而不是「删除」", async () => {
         const fresh = store.addJob(user.id, "https://music.apple.com/cn/album/5", "alac");
-        const html = await (await call("GET", "/jobs")).text();
+        const html = await (await call("GET", "/")).text();
         assert.ok(html.includes(`data-cancel="${fresh.id}"`));
         assert.ok(!html.includes(`data-del="${fresh.id}"`));
     });
 
-    await check("详情区：已结束的任务给「重试 + 删除」，且没有「取消任务」", async () => {
-        const html = await (await call("GET", `/jobs?job=${failedJob.id}`)).text();
+    await check("检视器：已结束的任务给「重试 + 删除」，且没有「取消任务」", async () => {
+        const html = await (await call("GET", `/?job=${failedJob.id}`)).text();
         assert.ok(html.includes(`data-retry="${failedJob.id}"`));
         assert.ok(html.includes(`data-del="${failedJob.id}"`));
-        assert.ok(!html.includes(">取消任务<"), "终态详情不该出现取消按钮");
+        assert.ok(!html.includes(">取消任务<"), "终态不该出现取消按钮");
+    });
+
+    await check("队列：每行都带进度条与状态徽章", async () => {
+        const html = await (await call("GET", "/")).text();
+        assert.ok(html.includes(`data-qrow="${done.id}"`), "任务行要有 data-qrow 供选中联动使用");
+        assert.ok(html.includes(`data-status="${done.status}"`), "任务行要有 data-status 供页签筛选使用");
+        assert.ok(html.includes('class="pbar'), "任务行要有进度条");
     });
 
     /* -------------------------------------------------------------- 3. 删除 */
@@ -168,6 +182,29 @@ try {
         assert.equal(res.status, 404);
     });
 
+    // 专供跳转断言用的活任务：前面的删除用例会把终态任务真删掉，
+    // 拿一个已不存在的 id 去断言"跳到那一条"当然失败（而跳到 "/" 反而是正确行为）。
+    const redirectJob = store.addJob(user.id, "https://music.apple.com/cn/album/77", "alac");
+
+    /*
+     * /jobs 跳转断言。
+     *
+     * 用 redirectJob（上面刚建的活任务）而不是 done/cancelled 那几条 ——
+     * 前面几组删除用例已经把它们真删掉了，拿一个不存在的 id 去断言
+     * "跳到那一条"当然失败，而跳到 "/" 其实是正确行为，测的就不是它了。
+     * redirect:"manual" 也是必需的：fetch 默认跟着 302 走，res.status 永远是 200。
+     */
+    await check("/jobs 现在只是跳工作台（书签与旧链接仍可用）", async () => {
+        const res = await fetch(base + "/jobs", { headers: { cookie: cookieHeader }, redirect: "manual" });
+        assert.equal(res.status, 302, "/jobs 应是重定向，而不是渲染那个已废弃的双栏页");
+        assert.equal(res.headers.get("location"), "/");
+        const withJob = await fetch(base + `/jobs?job=${redirectJob.id}`, { headers: { cookie: cookieHeader }, redirect: "manual" });
+        assert.equal(withJob.status, 302);
+        assert.equal(withJob.headers.get("location"), `/?job=${redirectJob.id}`, "带 ?job= 要落到那一条");
+        const gone = await fetch(base + "/jobs?job=999999", { headers: { cookie: cookieHeader }, redirect: "manual" });
+        assert.equal(gone.headers.get("location"), "/", "任务不存在时回到工作台首页");
+    });
+
     /* -------------------------------------------------- 4. 清空已结束 */
     await check("清空已结束：终态全清、活任务留下", async () => {
         const before = store.jobs().length;
@@ -183,7 +220,7 @@ try {
     });
 
     await check("清空后页面不再显示「清空已结束」", async () => {
-        const html = await (await call("GET", "/jobs")).text();
+        const html = await (await call("GET", "/")).text();
         assert.ok(!html.includes("data-clear-finished"));
     });
 } finally {

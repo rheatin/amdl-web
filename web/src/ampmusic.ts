@@ -121,6 +121,7 @@ export type SearchItem = {
     name: string;
     artistName: string;
     albumName: string;
+    /** 封面的**原始模板**，含 `{w}x{h}{f}` 占位；渲染时用 artworkAt() 指定尺寸。 */
     artwork: string;
     url: string;
     trackCount?: number;
@@ -152,6 +153,31 @@ function enhancedHlsOf(item: { attributes?: RawAttrs } | undefined): string | un
     return /^https?:\/\//i.test(url) ? url : undefined;
 }
 
+/**
+ * 把封面的尺寸模板展开成指定像素的可用 URL。
+ *
+ * **模板的形状不是固定的**，这是踩过的坑：mzstatic 对不同商店/不同记录给出的
+ * 占位符并不一致，实测见过三种
+ *   `…/xxx.rgb.jpg/{w}x{h}{f}`      展开成 `300x300bb.jpg`
+ *   `…/JAY.jpg/{w}x{h}bb.jpg`      展开成 `300x300bb.jpg`（位深已写死在模板里）
+ *   `…/xxx.jpg/{w}x{h}.jpg`        展开成 `300x300bb.jpg`
+ * 只认第一种的话，其余两种会拼出 `…/{w}x{h}bb.jpg/300x300bb.jpg` 这种垃圾串，
+ * 浏览器拿到 404 而且**页面不会报任何错**（<img> 加载失败只是空图）。
+ *
+ * 做法：先把整段"尺寸 + 位深 + 扩展名"的尾巴替换掉，位深一律固定成 `bb`
+ * —— 实测 `600x600dd.jpg` 是 404，只有 bb 可用。
+ * 格式默认 jpg；要 webp 时同时把扩展名换掉（1200x1200bb.webp 实测可用）。
+ *
+ * 保留模板而不是提前定死尺寸，是因为界面要按显示大小取图：
+ * 列表小图 160、卡片 300、放大预览 600/1200 全都不一样。
+ */
+export function artworkAt(template: string, size: number, format: "jpg" | "webp" = "jpg"): string {
+    if (!template) return "";
+    if (!template.includes("{w}")) return template;
+    // 吃掉 "{w}x{h}" 连同它后面紧跟的东西：位深段（bb/dd/cc）、点扩展名、或 {f} 占位符
+    return template.replace(/\{w\}x\{h\}(?:bb|dd|cc)?(?:\.\w+|\{f\})?/, `${size}x${size}bb.${format}`);
+}
+
 export async function searchCatalog(
     term: string,
     types = "songs,albums,artists",
@@ -180,7 +206,7 @@ export async function searchCatalog(
                 name: a.name ?? "(untitled)",
                 artistName: a.artistName ?? "",
                 albumName: a.albumName ?? "",
-                artwork: (a.artwork?.url ?? "").replace("{w}", "160").replace("{h}", "160"),
+                artwork: a.artwork?.url ?? "",
                 url: a.url ?? "",
                 trackCount: a.trackCount,
                 releaseDate: a.releaseDate,
@@ -207,6 +233,8 @@ export type TrackCapability = {
     name: string;
     artistName: string;
     albumName: string;
+    /** 封面模板（同 SearchItem.artwork）—— 解析预览也要能出封面，不能只有搜索页有。 */
+    artwork: string;
     /** Raw Apple `audioTraits` values, e.g. ["lossless","hi-res-lossless","atmos"]. */
     traits: string[];
     /** Which of ALL_CODECS this track actually supports. */
@@ -284,6 +312,7 @@ export async function trackCapability(adamId: string, storefront?: string): Prom
         name: a.name ?? "",
         artistName: a.artistName ?? "",
         albumName: a.albumName ?? "",
+        artwork: a.artwork?.url ?? "",
         traits,
         codecs: mapTraits(traits),
         durationMs: typeof a.durationInMillis === "number" ? a.durationInMillis : undefined,
@@ -332,6 +361,7 @@ async function collectionCapability(
         name: a.name ?? "",
         artistName: a.artistName ?? "",
         albumName: kind === "albums" ? (a.name ?? "") : "",
+        artwork: a.artwork?.url ?? "",
         traits,
         codecs: tracks.length > 0 ? mapTraits(traits) : [...ALL_CODECS],
         summary: tracks.length > 0 ? summarizeTraits(traits) : "未知",
@@ -580,6 +610,7 @@ export type MusicVideoInfo = {
     albumName: string;
     durationMs?: number;
     releaseDate?: string;
+    /** 封面模板（含 `{w}x{h}{f}`），渲染时用 artworkAt() 展开。 */
     artwork: string;
     url: string;
 };
@@ -600,7 +631,7 @@ export async function musicVideoInfo(adamId: string, storefront?: string): Promi
         albumName: a.albumName ?? "",
         durationMs: typeof a.durationInMillis === "number" ? a.durationInMillis : undefined,
         releaseDate: a.releaseDate,
-        artwork: (a.artwork?.url ?? "").replace("{w}", "160").replace("{h}", "160"),
+        artwork: a.artwork?.url ?? "",
         url: a.url ?? ""
     };
 }

@@ -1,36 +1,45 @@
 <%- include("partials/head") %>
 
-<section class="card">
-    <h1>搜索 Apple Music</h1>
-    <p class="muted">目录搜索使用公开的网页播放器开发者 token，<b>不需要 Apple 账号</b>。</p>
-    <form method="get" action="/search" class="row" data-search-form>
-        <input name="q" value="<%= q %>" placeholder="歌名 / 专辑 / 艺人" autofocus required>
+<%#
+  搜索结果保持**封面墙**（用户明确要"图片优先"），但外壳统一到工作台的语言：
+  同一个 .hero 输入条、同一种芯片、同一个"一个主按钮 + 其余 ghost"的层级。
+
+  为什么不改成行式列表：搜索的意义是"看着封面挑"，行式会把最大的视觉信号（封面）
+  压成 52px 小图 —— 那是重构之前的老问题，不该在收尾时重新引入。
+  要统一的是**外壳与操作**，不是信息的呈现形态。
+%>
+<section class="hero">
+    <div class="label">catalog search</div>
+    <form method="get" action="/search" class="hero-bar" data-search-form>
+        <div class="hero-field">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+            </svg>
+            <input name="q" value="<%= q %>" placeholder="歌名 / 专辑 / 艺人" autofocus required>
+        </div>
         <label class="inline-field">商店
             <%- include("partials/region-select", {
                 name: "region", id: "search-region", selected: region, inheritLabel: `默认（${defaultRegionName}）`
             }) %>
         </label>
-        <button type="submit" data-search-submit>搜索</button>
+        <button type="submit" class="hero-go" data-search-submit>搜索</button>
     </form>
-    <%
-    /* 只在「真的换了商店」时提示 —— 默认搜索不必解释 */
-    const usingOverride = region && region !== config.storefront;
-    %>
-    <p class="muted small">
-        搜索范围：<b><%= regionName %></b><%= usingOverride ? "（本次临时指定）" : `　— 换商店可以搜到该区的元数据写法（例如日文原名），点结果里的下载按钮会带着这个商店一起建任务。` %>
-    </p>
-    <p class="muted small">
-        每条结果下面的<strong>音质芯片</strong>是该曲目实际可下的规格（位深 / 采样率 / Hi-Res / Dolby Atmos）。
-        它取自 Apple 的播放清单，所以<strong>比"ALAC / AAC"这种笼统标签更准</strong>：
-        ALAC 也分 16-bit/44.1 kHz 与 24-bit/96 kHz（后者才是 Hi-Res）。
-        取数的顺序是：<strong>先出结果列表，再逐条回填音质</strong> ——
-        所以看到结果就用不着再等了，芯片会一条条补上（首次搜索每条约 1 秒，之后同一曲目命中缓存）。
-    </p>
+    <div class="hero-opts">
+        <span class="muted small">
+            搜索范围 <b><%= regionName %></b>
+            <span class="why right" tabindex="0">?
+                <span class="why-body">
+                    换商店可以搜到该区的元数据写法（例如日文原名），点结果里的下载按钮会带着这个商店一起建任务。<br>
+                    目录搜索用的是公开的网页播放器开发者 token，<b>不需要 Apple 账号</b>。
+                </span>
+            </span>
+        </span>
+    </div>
 </section>
 
 <%# 结果区两种进法：带 q 时有 JS 就换成流式（见 public/search.js），没有 JS 就是服务端渲染好的静态结果 %>
 <%- include("partials/results-section", {
-    q: q, error: error, results: results, region: region
+    q: q, error: error, results: results, region: region, ceilings: ceilings
 }) %>
 
 <p id="search-msg" class="toast"></p>

@@ -1,0 +1,30 @@
+<%- include("partials/head") %>
+
+<%#
+  单个任务实际使用的引擎配置（只读）。
+  这份文件 = 基础 config.yaml + 本任务的显式覆盖，是"这次下载到底按什么跑"的唯一准确答案。
+%>
+<section class="card narrow">
+    <h1 class="card-title">任务 #<%= job.id %> 的引擎配置</h1>
+    <p class="muted small">
+        <% if (job.meta && job.meta.title) { %><%= job.meta.title %> · <% } %><%= job.codec %>
+        · 创建于 <%= new Date(job.createdAt).toLocaleString() %>
+    </p>
+    <p class="muted small">
+        文件：<code><%= file %></code>
+    </p>
+    <p class="row">
+        <a class="ghost" href="/jobs?job=<%= job.id %>">← 回到任务</a>
+    </p>
+</section>
+
+<section class="card">
+    <% if (ceilings && ceilings.alacMaxHz) { %>
+        <p class="muted small">
+            当前引擎上限：ALAC 采样率 ≤ <%= ceilings.alacMaxHz %> Hz<% if (ceilings.atmosMaxKbps) { %> · Atmos ≤ <%= ceilings.atmosMaxKbps %> kbps<% } %><% if (ceilings.mvMax) { %> · MV ≤ <%= ceilings.mvMax %>p<% } %>
+        </p>
+    <% } %>
+    <pre class="code"><%= text %></pre>
+</section>
+
+<%- include("partials/foot") %>

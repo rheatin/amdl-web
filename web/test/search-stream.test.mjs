@@ -279,10 +279,7 @@ try {
         );
         assert.ok(!blockingHtml.includes("192 kHz"), "wrapper 掉线时不可能出现 192 kHz");
         /* 单曲走 formatsFromCatalog（有目录兜底）；专辑走 collectionFormats（只问 wrapper） */
-        assert.ok(
-            blockingHtml.includes("未取到（wrapper-lite 没返回该曲目的播放清单）"),
-            "专辑在 wrapper 掉线时应显示未取到"
-        );
+        assert.ok(blockingHtml.includes("音质未取到"), "专辑在 wrapper 掉线时应显示未取到");
         assert.equal(calls.m3u8, 3, "wrapper 掉线时仍会被问 3 次（单曲 1 + 专辑前 2 首）");
     });
     console.log(`      完整渲染（wrapper 掉线 · 目录兜底）耗时 ${blockingMs}ms`);
@@ -399,8 +396,7 @@ try {
     check("MV 卡走视频分支", () => {
         const mv = cards.find((c) => c.msg.id === MV_ID);
         assert.ok(mv, "缺 MV 卡");
-        assert.ok(mv.msg.html.includes("MV · 视频 + 音轨"));
-        assert.ok(mv.msg.html.includes('data-codec="mv"'));
+        assert.ok(mv.msg.html.includes('data-codec="mv"'), "MV 卡要带 mv 编码的下载按钮");
     });
 
     check("音质回填刚好 2 条（歌 + 专辑），id 不重复", () => {
@@ -458,9 +454,16 @@ try {
 
     check("专辑的音质也逐条回填（第二档 AAC 也在）", () => {
         const albumFill = fills.find((f) => f.msg.id === ALBUM_ID);
-        assert.ok(albumFill.msg.html.includes('q-chip hires'), "专辑应有 Hi-Res 芯片");
+        assert.ok(albumFill.msg.html.includes("q-chip hires") || albumFill.msg.html.includes("q-chip ok"), "专辑应有音质芯片");
         assert.ok(albumFill.msg.html.includes("192 kHz"), "专辑回填应带具体采样率");
-        assert.ok(albumFill.msg.html.includes('data-codec="atmos"'), "专辑也要有 Atmos 按钮");
+        /*
+         * 这份 fixture 的清单只有 ALAC + AAC（见 WRAPPER_HLS），**没有 Atmos**，
+         * 所以卡片上不该出现 Atmos 按钮 —— 早先模板恒定渲染三个按钮，于是一个
+         * 点下去必然被服务端拒绝的按钮一直摆在只有 ALAC 的曲目上。
+         * 现在按钮只给真有该编码的曲目（见 result-item.ejs）。
+         */
+        assert.ok(!albumFill.msg.html.includes('data-codec="atmos"'), "没有 Atmos 的曲目不该给 Atmos 按钮");
+        assert.ok(albumFill.msg.html.includes('data-codec="aac"'), "有 AAC 就要给 AAC 按钮");
     });
 
     /* ------------------------------------------------------ 3b. 音质缓存（同一 q 再搜一次） */

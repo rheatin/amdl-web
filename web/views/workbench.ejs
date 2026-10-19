@@ -1,0 +1,135 @@
+<%- include("partials/head") %>
+
+<%#
+  下载工作台 —— 单屏完成「输入 → 排队 → 看进度 → 看详情」。
+
+  为什么是单屏：原来拆成 概览/搜索/任务/音乐库/配置 五个页面，
+  而下载这件事的完整流程要在这几页之间来回跳 —— 输入在概览、
+  找歌在搜索、看进度在任务页。现在一次到位。
+
+  顶部 Hero 的输入框**同时接受** Apple Music 链接与歌名/艺人关键词
+  （模板也是这么做的）：判断"这是链接还是关键词"不需要额外的 UI 开关。
+%>
+
+<section class="hero">
+    <form id="enqueue-form" class="hero-bar">
+        <div class="hero-field">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/>
+                <path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>
+            </svg>
+            <input id="q" name="q" placeholder="粘贴 music.apple.com 链接，或输入歌名 / 艺人 / 专辑…" autocomplete="off" required>
+        </div>
+        <%#
+            按钮文案**随输入内容变**：空着时是"搜索"，粘了 Apple 链接才变"加入队列"。
+            固定写"加入队列"的问题是：空表单下它什么也做不了，却暗示"点它就会下载"，
+            点下去被 required 拦下，用户只会以为按钮坏了。
+            切换逻辑在 workbench.js 的 syncEnqueueLabel()。
+        %>
+        <button type="submit" class="hero-go" id="enqueue-btn">搜索</button>
+    </form>
+
+    <div class="hero-opts">
+        <label class="inline-field">
+            商店
+            <%- include("partials/region-select", { name: "region", id: "job-region", selected: "", inheritLabel: `默认（${defaultRegionName}）` }) %>
+        </label>
+        <label class="chk">
+            <input type="checkbox" id="opts-override"> 覆盖歌词选项
+            <span class="why right" tabindex="0">?
+                <span class="why-body">
+                    勾选后这个任务会覆盖歌词相关配置，<b>只影响本次</b>、不写入任何文件；
+                    不勾选则完全按 <code>config.yaml</code> 执行。
+                    展开后可以逐项改：嵌入标签、另存 .lrc、逐行/逐字、翻译/罗马音、lrc/ttml。
+                </span>
+            </span>
+        </label>
+        <label class="chk">
+            <input type="checkbox" id="job-automatch"> 目标区没有时自动找等价记录
+            <span class="warn">（有下错风险）</span>
+            <span class="why right" tabindex="0">?
+                <span class="why-body">
+                    <b>为什么需要</b>：同一首歌在 Apple 目录里往往有多条记录（不同年代的再版、
+                    精选集、EP），目标区的标题才是当地人看到的写法。所以「目标区没有这条链接的记录」
+                    不等于「目标区没有这首歌」。<br><br>
+                    <b>判定有多严</b>：会在目标区搜一次，只有<b>艺人名与时长都一致</b>（±1 秒）
+                    才改用搜到的那条；任何一项对不上就<b>一律回退</b>。<b>不勾选则只回退，绝不替换。</b><br><br>
+                    <b>风险</b>：同名不同版本很多（翻唱、现场版、TV size、钢琴版）。
+                    换用后请在检视器里核对落盘的曲目名与时长。<br><br>
+                    自动匹配<b>只对单曲链接生效</b>；整张专辑/播放列表不做替换。
+                </span>
+            </span>
+        </label>
+        <span class="grow" style="flex:1"></span>
+        <span class="muted small">地区只影响<b>元数据写法</b>（文件名与标签），音频本身是同一条记录。</span>
+    </div>
+
+    <details class="opts" id="lyrics-opts" hidden>
+        <summary>歌词选项（仅本次任务）</summary>
+        <div class="opt-grid" id="opts-box">
+            <label class="chk"><input type="checkbox" name="embedLrc" <%= opts.embedLrc ? "checked" : "" %>> 嵌入歌词</label>
+            <label class="chk"><input type="checkbox" name="saveLrcFile" <%= opts.saveLrcFile ? "checked" : "" %>> 另存 .lrc</label>
+            <label>歌词类型
+                <select name="lrcType">
+                    <option value="lyrics" <%= opts.lrcType === "lyrics" ? "selected" : "" %>>逐行</option>
+                    <option value="syllable-lyrics" <%= opts.lrcType === "syllable-lyrics" ? "selected" : "" %>>逐字</option>
+                </select>
+            </label>
+            <label>附加
+                <select name="lrcExtra">
+                    <option value="" <%= opts.lrcExtra === "" ? "selected" : "" %>>无</option>
+                    <option value="translation" <%= opts.lrcExtra === "translation" ? "selected" : "" %>>翻译</option>
+                    <option value="pronunciation" <%= opts.lrcExtra === "pronunciation" ? "selected" : "" %>>罗马音</option>
+                </select>
+            </label>
+            <label>格式
+                <select name="lrcFormat">
+                    <option value="lrc" <%= opts.lrcFormat === "lrc" ? "selected" : "" %>>lrc</option>
+                    <option value="ttml" <%= opts.lrcFormat === "ttml" ? "selected" : "" %>>ttml</option>
+                </select>
+            </label>
+        </div>
+    </details>
+
+    <p id="enqueue-msg" class="muted small"></p>
+    <p id="parse-result" class="parse-result" hidden></p>
+</section>
+
+<div class="bench" style="margin-top:var(--space-5)">
+    <div class="bench-main">
+        <div class="bench-bar">
+            <div class="tabs" role="tablist" id="queue-tabs">
+                <button class="tab" role="tab" data-filter="all" aria-selected="true">全部 <span class="n" data-count="all"><%= jobs.length %></span></button>
+                <button class="tab" role="tab" data-filter="active" aria-selected="false">进行中 <span class="n" data-count="active"><%= activeCount %></span></button>
+                <button class="tab" role="tab" data-filter="done" aria-selected="false">已结束 <span class="n" data-count="done"><%= jobs.length - activeCount %></span></button>
+            </div>
+            <%# 没有已结束任务时不出现这个按钮：无终态任务时它是个必然空转的操作，
+                而页面上摆一个点不动的按钮比不摆更让人困惑。 %>
+            <div class="bar-actions">
+                <% if (finishedCount > 0) { %>
+                    <button class="ghost" type="button" data-clear-finished>清空已结束<%= finishedCount ? `（${finishedCount}）` : "" %></button>
+                <% } %>
+            </div>
+        </div>
+
+        <ul class="queue" id="queue-list" role="listbox" aria-label="下载队列">
+            <% jobs.forEach(function (j) { %>
+                <%# art 要显式透传：EJS 的 include 只单向向下可见（见 index.ts 的注释）。 %>
+                <%- include("partials/task-row", { j: j, progress: j.progress, selected: selected, statusText: statusText, art: art, linkLabel: linkLabel }) %>
+            <% }) %>
+        </ul>
+        <% if (jobs.length === 0) { %>
+            <div class="empty">队列是空的。把上面的链接或歌名加进来。</div>
+        <% } %>
+    </div>
+
+    <div class="bench-side">
+        <%- include("partials/inspector", { selected: selected, art: art, linkLabel: linkLabel }) %>
+    </div>
+</div>
+
+<%# workbench.js 只在工作台加载：页签筛选/选中联动/进度推进都在这里，
+    app.js 保持跨页面通用（请求封装 + 操作委托 + 提示）。 %>
+<script src="/static/workbench.js?v=<%= assetVersion %>" defer></script>
+
+<%- include("partials/foot") %>

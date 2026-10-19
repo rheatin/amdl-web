@@ -44,6 +44,26 @@ function legacySaveKey(key: string): string {
 }
 
 /**
+ * 找出音频文件同目录下的封面。
+ *
+ * 引擎下载时会顺手把封面写成同目录的 `cover.jpg`（实测每张专辑都有，
+ * 见 filemode.ts 的 SIDECAR 集合 —— 那里早就把 jpg 算作 sidecar 了）。
+ * 于是**历史任务也能有封面**：不需要任何网络请求，也不需要回填任务元数据 ——
+ * 只要曲目在磁盘上，封面就在它旁边。
+ *
+ * 找不到就返回空串：音乐库据此走 no-art 占位分支，而不是留一个破图。
+ * 只看同目录、不递归 —— 封面就在专辑目录里，多找一层容易命中隔壁专辑的。
+ */
+export function coverBeside(audioPath: string): string {
+    try {
+        const p = path.join(path.dirname(audioPath), "cover.jpg");
+        return fs.existsSync(p) ? p : "";
+    } catch {
+        return "";
+    }
+}
+
+/**
  * 由文件路径还原成展示用的曲目信息。
  *
  * 落盘布局是 `<save-folder>/<artist>/<album>/<song>.<ext>`（命名模板默认如此），
@@ -88,15 +108,18 @@ export function discoverLandedTracks(sinceMs: number, dirs: string[] = saveDirs(
             }
             if (!entry.isFile() || !AUDIO.test(entry.name)) continue;
             if (seen.has(p)) continue;
-            let mtime = 0;
+            let st: fs.Stats;
             try {
-                mtime = fs.statSync(p).mtimeMs;
+                st = fs.statSync(p);
             } catch {
                 continue;
             }
-            if (mtime < cutoff) continue;
+            if (st.mtimeMs < cutoff) continue;
             seen.add(p);
-            found.push(trackFromPath(root, p));
+            // size 与 mtime 来自同一次 stat —— 不额外再 stat 一次。
+            // 有了 size 配合曲目的 durationMs 就能算真实码率，
+            // 也让音乐库能显示体积、按大小排序。
+            found.push({ ...trackFromPath(root, p), size: st.size });
             if (found.length >= MAX_FILES) return;
         }
     };
