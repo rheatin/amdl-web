@@ -207,6 +207,32 @@ document.addEventListener("click", async (ev) => {
     }
 });
 
+/* ---- 卡片 → 详情页 ---------------------------------------------------- */
+
+/*
+ * 点封面卡或榜单卡进入详情页。
+ *
+ * 用事件委托（卡片是流式插入的）。以下三种情况不跳转：
+ *   · 点的是按钮（下载、取消……）—— 那些有自己的处理
+ *   · 点的是链接（任务编号）
+ *   · 点的是 .why（说明气泡）
+ *
+ * `data-item-kind` / `data-item-id` 由模板写在卡片上；只有"有详情页意义"的
+ * 类型（专辑/播放列表/单曲/MV）才会带，艺人卡暂不带（没有艺人详情页）。
+ */
+document.addEventListener("click", (ev) => {
+    const t = ev.target instanceof Element ? ev.target : null;
+    if (!t) return;
+    if (t.closest("button, a, .why")) return;
+    const card = t.closest("[data-item-id]");
+    if (!card) return;
+    const kind = card.getAttribute("data-item-kind") || "album";
+    const id = card.getAttribute("data-item-id");
+    if (!id) return;
+    const region = card.getAttribute("data-region") || "";
+    location.href = `/item?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}${region ? `&region=${encodeURIComponent(region)}` : ""}`;
+});
+
 /* ---- 登录页首次运行：创建管理员 -------------------------------------- */
 
 const setupForm = document.getElementById("setup-form");

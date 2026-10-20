@@ -429,6 +429,8 @@ const escAttr = (s) => escHtml(s);
         if (!Array.isArray(sections) || sections.length === 0) return;
 
         const LABEL = { song: "歌曲", album: "专辑", playlist: "播放列表", "music-video": "MV" };
+        /* 榜单是按这个商店取的（见 /api/charts 的 storefront），跳详情页要带上 */
+        const chartRegion = wrap.getAttribute("data-region") || "";
         body.innerHTML = sections
             .map((sec) => {
                 const cards = sec.items
@@ -440,7 +442,7 @@ const escAttr = (s) => escHtml(s);
                             title: it.name, artistName: it.artistName, albumName: it.albumName,
                             artwork: it.artwork, durationMs: it.durationMs, expectedTracks: it.trackCount
                         }));
-                        return `<article class="chart-card">
+                        return `<article class="chart-card" data-item-kind="${escAttr(it.type)}" data-item-id="${escAttr(it.id)}" data-region="${escAttr(chartRegion)}">
                             <div class="chart-art${art ? "" : " no-art"}">
                                 ${art ? `<img src="${escAttr(art)}" alt="" loading="lazy" width="200" height="200">` : ""}
                                 ${canDownload ? `<div class="art-panel"><div class="art-panel-in">

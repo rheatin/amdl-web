@@ -128,7 +128,8 @@
             Apple 那边偶发抽风（或 NAS 出口抖动）时，工作台本身不该因此变慢或报错。
             取不到就整块不显示，用户根本不会注意到 —— 这比在首屏挂一个红框好。
         %>
-        <section class="card" id="charts" hidden>
+        <%# data-region 供卡片拼详情页链接：榜单是按这个商店取的，跳转时要带上 %>
+        <section class="card<%= jobs.length > 0 ? " charts-compact" : "" %>" id="charts" data-region="<%= telemetry ? telemetry.storefront : "" %>" hidden>
             <div class="head-row">
                 <h2 class="card-title">热门榜单</h2>
                 <span class="label" id="charts-state">加载中</span>
@@ -142,7 +143,7 @@
     </div>
 </div>
 
-<%# workbench.js 只在工作台加载：页签筛选/选中联动/进度推进都在这里，
+<%# workbench.js 只在工作台加载：页签筛选/选中联动/进度推进/榜单都在这里，
     app.js 保持跨页面通用（请求封装 + 操作委托 + 提示）。 %>
 <script src="/static/workbench.js?v=<%= assetVersion %>" defer></script>
 

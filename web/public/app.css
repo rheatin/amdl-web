@@ -2838,3 +2838,235 @@ button.link {
     font-size: var(--text-xs);
     color: var(--fg-muted);
 }
+
+/* --- 详情页 ----------------------------------------------------------- */
+/*
+ * 封面用 220px 而不是铺满：详情页的主角是**曲目列表**，
+ * 封面太大只会把曲目挤到首屏之外。两侧留白由 hero 的 flex 自然吸收。
+ */
+.item-hero {
+    display: flex;
+    gap: var(--space-6);
+    align-items: flex-start;
+}
+
+.item-art {
+    width: 220px;
+    flex: none;
+    aspect-ratio: 1;
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--surface-2);
+    border: 1px solid var(--line-soft);
+    box-shadow: var(--shadow-2);
+}
+
+.item-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.item-art.no-art {
+    background: linear-gradient(135deg, var(--surface-2), var(--surface-3));
+}
+
+.item-info {
+    min-width: 0;
+    flex: 1;
+}
+
+.item-title {
+    font-size: var(--text-3xl);
+    font-weight: 700;
+    letter-spacing: var(--tracking-tight);
+    margin: var(--space-1) 0 var(--space-2);
+}
+
+.item-artist {
+    font-size: var(--text-lg);
+    color: var(--fg-muted);
+    margin-bottom: var(--space-3);
+}
+
+.item-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.item-desc {
+    margin-top: var(--space-3);
+    max-width: 72ch;
+    line-height: 1.7;
+}
+
+.item-actions {
+    margin-top: var(--space-5);
+}
+
+/* 详情页的主下载按钮：这是页面上唯一的实心按钮 */
+.dl-primary-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-6);
+    min-height: 44px;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(100deg, var(--accent), var(--violet));
+    border: 1px solid transparent;
+    box-shadow: 0 8px 24px -10px var(--accent-glow), var(--inner-hairline);
+    cursor: pointer;
+    transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out),
+        opacity var(--dur-fast) var(--ease-out);
+}
+
+.dl-primary-inline svg {
+    width: 17px;
+    height: 17px;
+    flex: none;
+}
+
+.dl-primary-inline:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 30px -10px var(--accent-glow), var(--inner-hairline);
+}
+
+.dl-primary-inline:disabled {
+    opacity: 0.55;
+    cursor: wait;
+}
+
+/* --- 曲目列表 --------------------------------------------------------- */
+.tracklist {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.tracklist li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-2) var(--space-2);
+    border-radius: var(--radius-xs);
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.tracklist li:last-child {
+    border-bottom: none;
+}
+
+.tracklist li:hover {
+    background: var(--surface-2);
+}
+
+.tr-no {
+    width: 32px;
+    flex: none;
+    font-family: var(--mono);
+    font-size: var(--text-sm);
+    color: var(--fg-dim);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.tr-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.tr-name {
+    font-size: var(--text-base);
+    font-weight: 550;
+}
+
+.tr-sub {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+}
+
+.tr-dur {
+    flex: none;
+    font-size: var(--text-sm);
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* 整卡可点时给一个明确的指针，并让封面轻微上浮 —— 与封面墙的悬停一致 */
+.cover-card,
+.chart-card {
+    cursor: pointer;
+}
+
+@media (max-width: 860px) {
+    .item-hero {
+        flex-direction: column;
+    }
+    .item-art {
+        width: 160px;
+    }
+    .item-title {
+        font-size: var(--text-2xl);
+    }
+}
+
+/* --- 榜单：跟随队列状态调整密度 --------------------------------------- */
+/*
+ * 队列为空时，榜单就是首屏主角 —— 用较大的格子（180px），一条能看 6 张。
+ * 队列有任务时，下载才是主角，榜单降级为次要内容：格子收到 108px、
+ * 每条多露几张，整体高度矮一半，不抢队列的位置。
+ */
+.charts-compact .chart-strip {
+    grid-auto-columns: 108px;
+}
+
+.charts-compact .chart-row + .chart-row {
+    margin-top: var(--space-4);
+}
+
+/* 默认（队列为空）：格子更大，视觉上更像"浏览页" */
+.chart-strip {
+    grid-auto-columns: 180px;
+}
+
+/*
+ * 曲目行里的下载按钮：必须**不参与拉伸**。
+ * .tr-main 用了 flex:1 抢占剩余空间，但按钮默认 align-self:stretch 且
+ * flex-basis:auto → 被拉成整行高（截图里那排长条就是它）。
+ * 这里固定尺寸并靠右。
+ */
+.tracklist .dl {
+    flex: none;
+    align-self: center;
+    width: auto;
+    min-height: 0;
+    padding: var(--space-1) var(--space-3);
+    font-family: var(--mono);
+    font-size: var(--text-xs);
+    opacity: 0.75;
+}
+
+.tracklist li:hover .dl,
+.tracklist .dl:focus-visible {
+    opacity: 1;
+}
+
+/* 触屏没有 hover：始终可见 */
+@media (hover: none) {
+    .tracklist .dl {
+        opacity: 1;
+    }
+}

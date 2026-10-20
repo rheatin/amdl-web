@@ -51,7 +51,8 @@ const meta = (extra) => JSON.stringify(Object.assign({
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 %>
-<li class="cover-card" data-id="<%= r.id %>" data-type="<%= r.type %>">
+<li class="cover-card" data-id="<%= r.id %>" data-type="<%= r.type %>"
+    data-item-kind="<%= r.type %>" data-item-id="<%= r.id %>" data-region="<%= region %>">
     <div class="cover-art<%= r.artwork ? "" : " no-art" %>">
         <% if (r.artwork) { %>
             <img src="<%= art(r.artwork, 200) %>" alt="<%= r.name %> 封面" loading="lazy" width="200" height="200">

@@ -58,6 +58,11 @@ if (srForm && srInput && srResults && srList) {
          */
         li.hidden = !matchesCat(li);
         syncCatCats();
+        /*
+         * 回填可能比卡片先到（同一条 TCP 分片里的 fill 先于 card），
+         * 那种情况暂存在 earlyFills 里，卡片一插进 DOM 就立刻补上。
+         */
+        const early = earlyFills.get(id);
         if (early !== undefined) {
             earlyFills.delete(id);
             applyFill(id, early);

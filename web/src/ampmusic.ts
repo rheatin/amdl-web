@@ -143,6 +143,14 @@ type RawAttrs = {
     audioTraits?: string[];
     /** 目录给的增强 HLS 清单地址 —— 音质明细的首选取数来源（见 formatsFromCatalog）。 */
     extendedAssetUrls?: { enhancedHls?: string };
+    /* --- 详情页要用的字段（目录会在 tracks 与记录上给，但类型里之前没声明） --- */
+    discNumber?: number;
+    trackNumber?: number;
+    hasLyrics?: boolean;
+    hasTimeSyncedLyrics?: boolean;
+    genreNames?: string[];
+    /** 编辑文案。目录给的是 { standard, short } 结构，这里只取 standard。 */
+    description?: { standard?: string; short?: string };
 };
 
 type RawItem = { id?: string; type?: string; attributes?: RawAttrs };
@@ -448,6 +456,111 @@ async function collectionCapability(
         trackIds,
         trackHls,
         formats: []
+    };
+}
+
+/* ------------------------------------------------------------- 详情页数据 */
+
+/** 详情页里的单条曲目。 */
+export type ItemTrack = {
+    id: string;
+    name: string;
+    artistName: string;
+    albumName: string;
+    /** 时长（ms） */
+    durationMs?: number;
+    /** 曲序（discNumber/trackNumber 组合成 "1-02" 这种） */
+    trackNo?: string;
+    diskNumber?: number;
+    trackNumber?: number;
+    /** 该曲自己的目录 URL（用于逐曲建任务） */
+    url: string;
+    /** 是否有歌词（目录会给 hasLyrics / hasTimeSyncedLyrics） */
+    hasLyrics?: boolean;
+    hasTimeSyncedLyrics?: boolean;
+};
+
+export type ItemDetail = {
+    kind: "song" | "album" | "playlist" | "artist" | "music-video" | string;
+    id: string;
+    name: string;
+    artistName: string;
+    /** 封面模板（含 {w}x{h}） */
+    artwork: string;
+    /** 这条记录的目录 URL —— 也是"整张下载"用的那个链接 */
+    url: string;
+    releaseDate?: string;
+    trackCount?: number;
+    genreNames?: string[];
+    /** 专辑/播放列表的曲目；单曲与艺人时为空 */
+    tracks: ItemTrack[];
+    /** 描述（编辑文案，可能没有） */
+    description?: string;
+};
+
+/**
+ * 详情页数据：一条记录 + 它的曲目列表。
+ *
+ * 与 `capabilityFor` 的区别：那个只关心"能下什么编码"（traits/格式），
+ * 这个关心"里面有哪些曲目、每首多长、有没有歌词" —— 详情页要展示的是后者。
+ * 两者查的是**同一个目录接口**，但取不同字段，合并反而会让两边都变复杂。
+ */
+export async function itemDetail(
+    kind: string,
+    id: string,
+    storefrontOverride?: string
+): Promise<ItemDetail | null> {
+    const sf = pickStorefront(storefrontOverride);
+    if (!/^\d+$/.test(id) && !/^pl\./.test(id)) return null;
+
+    /* 单曲与 MV 没有 tracks 关系（它们本身就是曲目）。 */
+    const isCollection = kind === "album" || kind === "playlist";
+    const pathKind = kind === "album" ? "albums" : kind === "playlist" ? "playlists" : kind === "music-video" ? "music-videos" : "songs";
+    const params: Record<string, string> = { extend: "extendedAssetUrls" };
+    if (isCollection) params["include"] = "tracks";
+
+    const raw = await catalogGet(`/v1/catalog/${encodeURIComponent(sf)}/${pathKind}/${encodeURIComponent(id)}`, params);
+    if (!raw) return null;
+    const item = ((raw as { data?: RawResource[] }).data ?? [])[0];
+    if (!item) return null;
+    const a = item.attributes ?? {};
+
+    const tracks: ItemTrack[] = (item.relationships?.tracks?.data ?? [])
+        /* 只保留数字 id：目录偶尔会在 tracks 里塞 "more-by" 之类的伪条目 */
+        .filter((t) => /^\d+$/.test(t.id ?? ""))
+        .map((t) => {
+            const ta = t.attributes ?? {};
+            /* 曲序：优先 disc-track 组合，播放列表通常没有 disc */
+            const disc = typeof ta.discNumber === "number" ? ta.discNumber : undefined;
+            const no = typeof ta.trackNumber === "number" ? ta.trackNumber : undefined;
+            const trackNo = no === undefined ? undefined : disc && disc > 1 ? `${disc}-${String(no).padStart(2, "0")}` : String(no).padStart(2, "0");
+            return {
+                id: t.id ?? "",
+                name: ta.name ?? "",
+                artistName: ta.artistName ?? "",
+                albumName: ta.albumName ?? "",
+                durationMs: typeof ta.durationInMillis === "number" ? ta.durationInMillis : undefined,
+                trackNo,
+                diskNumber: disc,
+                trackNumber: no,
+                url: ta.url ?? "",
+                hasLyrics: ta.hasLyrics,
+                hasTimeSyncedLyrics: ta.hasTimeSyncedLyrics
+            };
+        });
+
+    return {
+        kind,
+        id: item.id ?? id,
+        name: a.name ?? "",
+        artistName: a.artistName ?? "",
+        artwork: a.artwork?.url ?? "",
+        url: a.url ?? "",
+        releaseDate: a.releaseDate,
+        trackCount: typeof a.trackCount === "number" ? a.trackCount : tracks.length || undefined,
+        genreNames: Array.isArray(a.genreNames) ? a.genreNames.map(String) : undefined,
+        tracks,
+        description: a.description?.standard
     };
 }
 

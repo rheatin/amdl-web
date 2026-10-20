@@ -1,0 +1,120 @@
+<%- include("partials/head") %>
+
+<%#
+  详情页：一张专辑 / 一个播放列表 / 一首歌。
+
+  为什么要有它：搜索与榜单里点一条记录，此前**没有任何去处**
+  （榜单卡片根本没链接）。而"这张专辑里有哪些曲目、下全了没有"
+  只能靠下载完再回来翻，是明显的断层。
+
+  整张下载走**同一条 /api/jobs**：传这条记录的 URL 即可，引擎自己会展开
+  整张专辑。逐曲下载传每首自己的 URL —— 引擎也接受单曲链接。
+%>
+<%
+const MINS = (ms) => (ms ? Math.floor(ms / 60000) + ":" + String(Math.floor((ms / 1000) % 60)).padStart(2, "0") : "");
+const MB = (b) => (b ? (b / 1048576).toFixed(0) : "");
+const KIND_LABEL = { album: "专辑", playlist: "播放列表", song: "单曲", artist: "艺人", "music-video": "音乐视频" };
+const meta = (d, extra) => JSON.stringify(Object.assign({
+    title: d.name, artistName: d.artistName, albumName: d.kind === "album" ? d.name : "",
+    artwork: d.artwork, expectedTracks: d.trackCount
+}, extra || {}));
+%>
+
+<% if (error) { %>
+    <section class="card"><p class="parse-result err">取不到这条记录：<%= error %></p>
+        <p class="row"><a class="ghost" href="/">← 回到工作台</a></p></section>
+<% } else if (!detail) { %>
+    <section class="card"><div class="empty">这条记录不存在，或者当前商店没有它。</div>
+        <p class="row" style="margin-top:var(--space-4)"><a class="ghost" href="/">← 回到工作台</a></p></section>
+<% } else { %>
+    <section class="card accent">
+        <div class="item-hero">
+            <span class="item-art<%= detail.artwork ? "" : " no-art" %>">
+                <% if (detail.artwork) { %>
+                    <img src="<%= art(detail.artwork, 600) %>" alt="<%= detail.name %> 封面" width="600" height="600">
+                <% } %>
+            </span>
+            <div class="item-info">
+                <div class="label"><%= KIND_LABEL[detail.kind] || detail.kind %></div>
+                <h1 class="item-title"><%= detail.name %></h1>
+                <div class="item-artist">
+                    <%= detail.artistName %>
+                </div>
+                <div class="item-facts">
+                    <% if (detail.releaseDate) { %><span class="q-chip"><%= String(detail.releaseDate).slice(0, 4) %></span><% } %>
+                    <% if (detail.trackCount) { %><span class="q-chip"><%= detail.trackCount %> 首</span><% } %>
+                    <% (detail.genreNames || []).slice(0, 2).forEach(function (g) { %><span class="q-chip"><%= g %></span><% }) %>
+                    <span class="q-chip"><%= regionName %></span>
+                </div>
+
+                <% if (detail.description) { %>
+                    <p class="item-desc muted small"><%= detail.description %></p>
+                <% } %>
+
+                <%#
+                    整张下载：只给"容器"类记录（专辑/播放列表）。
+                    传这条记录的 url，引擎会自己展开全部曲目。
+                %>
+                <% if (detail.url && (detail.kind === "album" || detail.kind === "playlist" || detail.kind === "song" || detail.kind === "music-video")) { %>
+                    <div class="item-actions">
+                        <button class="dl-primary-inline"
+                                data-url="<%= detail.url %>"
+                                data-region="<%= region %>"
+                                data-codec="<%= detail.kind === "music-video" ? "mv" : "alac" %>"
+                                data-meta='<%- meta(detail) %>'>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+                            <span><%= detail.kind === "album" ? "下载整张专辑" : detail.kind === "playlist" ? "下载整个播放列表" : detail.kind === "music-video" ? "下载 MV" : "下载" %></span>
+                        </button>
+                    </div>
+                <% } %>
+                <p class="muted small" style="margin-top:var(--space-3)">
+                    链接自带的商店决定元数据写法；换商店会改变文件名与标签语言，音频本身是同一条记录。
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <% if (detail.tracks.length > 0) { %>
+        <section class="card">
+            <div class="head-row">
+                <h2 class="card-title">曲目</h2>
+                <span class="pill"><%= detail.tracks.length %> 首 · <%= MINS(detail.tracks.reduce(function (a, t) { return a + (t.durationMs || 0); }, 0)) %></span>
+            </div>
+            <ul class="tracklist">
+                <% detail.tracks.forEach(function (t, i) { %>
+                    <li>
+                        <span class="tr-no"><%= t.trackNo || String(i + 1).padStart(2, "0") %></span>
+                        <span class="tr-main">
+                            <span class="tr-name ellipsis" title="<%= t.name %>"><%= t.name %></span>
+                            <span class="tr-sub ellipsis">
+                                <%= t.artistName %>
+                                <% if (t.hasTimeSyncedLyrics) { %><span class="q-chip atmos">逐字歌词</span><% } else if (t.hasLyrics) { %><span class="q-chip">歌词</span><% } %>
+                            </span>
+                        </span>
+                        <span class="tr-dur num"><%= MINS(t.durationMs) %></span>
+                        <%#
+                            逐曲下载：用这一首自己的 url。
+                            没有 url 的曲目（极少见）不给按钮，而不是给一个点了会失败的。
+                        %>
+                        <% if (t.url) { %>
+                            <button class="dl ghost tiny"
+                                    data-url="<%= t.url %>"
+                                    data-region="<%= region %>"
+                                    data-codec="alac"
+                                    data-meta='<%- JSON.stringify({ title: t.name, artistName: t.artistName, albumName: detail.kind === "album" ? detail.name : t.albumName, artwork: detail.artwork, durationMs: t.durationMs }) %>'>下载</button>
+                        <% } %>
+                    </li>
+                <% }) %>
+            </ul>
+        </section>
+    <% } else if (detail.kind === "album" || detail.kind === "playlist") { %>
+        <section class="card"><div class="empty">目录没有返回这张的曲目列表（可能是版权限制或地区差异）。</div></section>
+    <% } %>
+
+    <p class="row" style="margin-top:var(--space-5)">
+        <a class="ghost" href="/">← 回到工作台</a>
+        <a class="ghost" href="<%= detail.url %>" target="_blank" rel="noreferrer">在 Apple Music 打开</a>
+    </p>
+<% } %>
+
+<%- include("partials/foot") %>

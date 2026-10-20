@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import {
     capabilityFor,
     fetchCharts,
+    itemDetail,
+    type ItemDetail,
     searchCatalog,
     ALL_CODECS,
     songFormats,
@@ -590,6 +592,45 @@ app.get("/jobs", requireAuth, (req: Request, res: Response) => {
         return;
     }
     res.redirect("/");
+});
+
+/**
+ * 详情页：一条记录 + 它的曲目列表。
+ *
+ * 用查询参数而不是路径段（`/item?kind=album&id=…`）：kind 与 id 都是
+ * 外部输入，路径段要做更细的转义与冲突处理（id 可能含 `pl.` 前缀），
+ * 而这条路由不承担 SEO 职责 —— 这是个需要登录的自托管工具。
+ *
+ * region 只影响**元数据取数**的商店（封面、曲名写法），与下载权限无关。
+ */
+app.get("/item", requireAuth, async (req: Request, res: Response) => {
+    const kind = String(req.query["kind"] ?? "album").trim();
+    const id = String(req.query["id"] ?? "").trim();
+    const region = normalizeRegion(req.query["region"]) ?? "";
+
+    if (!id) {
+        res.redirect("/");
+        return;
+    }
+    let detail: ItemDetail | null = null;
+    let error: string | null = null;
+    try {
+        detail = await itemDetail(kind, id, region || undefined);
+    } catch (err) {
+        error = err instanceof Error ? err.message : String(err);
+    }
+
+    res.render("item", {
+        detail,
+        error,
+        kind,
+        id,
+        region,
+        regionName: regionLabel(region || storefront()),
+        ceilings: qualityCeilingsFromConfig(),
+        statusText: { queued: "等待", running: "进行中", done: "完成", partial: "部分完成", failed: "失败", cancelled: "已取消" },
+        config
+    });
 });
 
 app.get("/library", requireAuth, (_req: Request, res: Response) => {
