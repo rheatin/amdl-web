@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
     capabilityFor,
+    fetchCharts,
     searchCatalog,
     ALL_CODECS,
     songFormats,
@@ -242,10 +243,13 @@ async function attachFormats(cap: TrackCapability, storefrontOverride?: string):
  * 而这个项目刻意不引入构建步骤把视图与 TS 拼在一起。
  * 于是规则**只存在这一处**，视图通过局部量拿到它 —— 没有第二份，也就没有漂移。
  *
- * 模板形状实测有四种（见 ampmusic.ts 的 artworkAt），只认一种的话另外三种会
- * 产出 404 的 URL，而 <img> 加载失败不产生任何控制台错误。
+ * 模板形状实测**五种**（见 ampmusic.ts 的 artworkAt）：除了 `{f}` / `bb.jpg` / `.jpg`，
+ * 播放列表是 `SC.DN01.jpg`、MV 是 `mv.jpg`。只认 bb/dd/cc 会拼出
+ * `…/200x200bb.jpgSC.DN01.jpg`（mzstatic 返回 400），
+ * 而 <img> 加载失败**不报任何错**，界面上只是少了张图。
+ * 这条正则**必须与 ampmusic.artworkAt 完全一致** —— 有单测逐字比对两者输出。
  */
-const ART_TEMPLATE_RE = /\{w\}x\{h\}(?:bb|dd|cc)?(?:\.\w+|\{f\})?/;
+const ART_TEMPLATE_RE = /\{w\}.*?(?=\?|$)/;
 const art = (tpl: string, size: number): string =>
     tpl && tpl.includes("{w}") ? tpl.replace(ART_TEMPLATE_RE, `${size}x${size}bb.jpg`) : tpl || "";
 
@@ -676,6 +680,26 @@ app.get("/api/search", requireAuth, async (req: Request, res: Response) => {
         res.json({ results: await searchCatalog(q) });
     } catch (err) {
         res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+});
+
+/*
+ * 榜单。用公开开发者 token 即可，**不需要 Apple 账号**。
+ *
+ * 为什么不和 /api/search 合并：榜单是"无关键词的浏览入口"，搜索是"有关键词的行为" ——
+ * 两者的缓存策略与界面落点都不同（榜单常驻工作台首页，搜索结果只在搜索后出现）。
+ *
+ * 失败时返回空数组而不是 5xx：榜单只是首页的顺带内容，
+ * Apple 那边偶发抽风是常态，不该让它把工作台整页打成错误。
+ */
+app.get("/api/charts", requireAuth, async (_req: Request, res: Response) => {
+    try {
+        res.json({ sections: await fetchCharts(12) });
+    } catch (err) {
+        res.json({
+            sections: [],
+            note: `榜单暂时取不到（${err instanceof Error ? err.message : String(err)}）`
+        });
     }
 });
 

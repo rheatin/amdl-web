@@ -52,11 +52,73 @@ if (srForm && srInput && srResults && srList) {
         const li = tpl.content.firstElementChild;
         if (!li) return;
         srList.appendChild(li);
-        const early = earlyFills.get(id);
+        /*
+         * 新卡片要先按**当前页签**决定是否显示：用户在「专辑」页签下搜出新歌，
+         * 歌卡不该突然冒出来。然后刷新计数与页签可用状态。
+         */
+        li.hidden = !matchesCat(li);
+        syncCatCats();
         if (early !== undefined) {
             earlyFills.delete(id);
             applyFill(id, early);
         }
+    }
+
+    /* ---- 分类页签（纯客户端过滤）------------------------------------ */
+    /*
+     * 卡片全部已在 DOM 里，所以切换页签只是 hidden 开关 —— 不再发请求。
+     * 这也是它必须和流式协作的原因：新卡片到达时要先按当前页签决定是否显示，
+     * 否则用户在"专辑"页签下搜出新歌，歌卡会突然冒出来。
+     */
+    const srCatTabs = document.querySelector("[data-cat-tabs]");
+    let srCat = "all";
+
+    const matchesCat = (li) => srCat === "all" || li.getAttribute("data-type") === srCat;
+
+    function syncCatCats() {
+        if (!srCatTabs || !srList) return;
+        const cards = [...srList.querySelectorAll(".cover-card")];
+        const counts = { all: cards.length };
+        for (const li of cards) {
+            const t = li.getAttribute("data-type") || "unknown";
+            counts[t] = (counts[t] || 0) + 1;
+        }
+        for (const [k, v] of Object.entries(counts)) {
+            const el = srCatTabs.querySelector(`[data-cat-count="${k}"]`);
+            // 计数为 0 的类别不显示数字（留个 0 反而像坏了）
+            if (el) el.textContent = v > 0 ? String(v) : "";
+        }
+        // 没结果的页签置灰，避免点了之后一片空白还以为是没加载出来
+        for (const btn of srCatTabs.querySelectorAll(".tab")) {
+            const k = btn.getAttribute("data-cat");
+            const n = counts[k] ?? (k === "all" ? cards.length : 0);
+            btn.disabled = k !== "all" && n === 0;
+        }
+        applyCatFilter();
+    }
+
+    function applyCatFilter() {
+        if (!srList) return;
+        for (const li of srList.querySelectorAll(".cover-card")) {
+            li.hidden = !matchesCat(li);
+        }
+        if (srEmpty) {
+            const anyVisible = [...srList.querySelectorAll(".cover-card")].some((li) => !li.hidden);
+            // 只在"当前页签下确实没有卡片"时显示空态；全站无结果由服务端文案负责
+            srEmpty.hidden = anyVisible || srList.children.length === 0;
+        }
+    }
+
+    if (srCatTabs) {
+        srCatTabs.addEventListener("click", (ev) => {
+            const btn = ev.target instanceof Element ? ev.target.closest(".tab") : null;
+            if (!btn || btn.disabled) return;
+            srCat = btn.getAttribute("data-cat") || "all";
+            for (const b of srCatTabs.querySelectorAll(".tab")) {
+                b.setAttribute("aria-selected", b === btn ? "true" : "false");
+            }
+            applyCatFilter();
+        });
     }
 
     function applyFill(id, html) {
@@ -257,4 +319,10 @@ if (srForm && srInput && srResults && srList) {
     } else {
         setState("", "idle");
     }
+
+    /*
+     * 服务端直出时卡片已在 DOM 里，但 syncCatCats 只在流式插卡时被调用，
+     * 页签上的计数会是空的。这里补一次，覆盖"首屏静态渲染"这条路径。
+     */
+    syncCatCats();
 }

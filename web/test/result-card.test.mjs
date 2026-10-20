@@ -95,11 +95,19 @@ const nastyHtml = await render(nasty);
 const TEMPLATE_SHAPES = [
     "https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/aa/bb/xx.rgb.jpg/{w}x{h}{f}",
     "https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/cc/dd/JAY.jpg/{w}x{h}bb.jpg",
-    "https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/ee/ff/yy.jpg/{w}x{h}.jpg"
+    "https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/ee/ff/yy.jpg/{w}x{h}.jpg",
+    /*
+     * 播放列表与 MV 的尾巴**不是** `bb`，而是 `SC.DN01.jpg` / `mv.jpg`。
+     * 只吃掉 bb/dd/cc 会拼出 `…/200x200bb.jpgSC.DN01.jpg`，mzstatic 返回 400，
+     * 而卡片上只是张空图、控制台什么都没有 —— 这是实际在 NAS 上看到的现象。
+     */
+    "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/aa/bb/x.png/{w}x{h}SC.DN01.jpg?l=zh-Hans",
+    "https://is1-ssl.mzstatic.com/image/thumb/Video1/v4/cc/dd/x.sca1.jpg/{w}x{h}mv.jpg"
 ];
 for (const tpl of TEMPLATE_SHAPES) {
     const out = (await render({ ...nasty, artwork: tpl })).match(/<img src="([^"]+)"/)[1];
-    check(`模板可展开且无残留占位符（${tpl.slice(-14)}）`, /200x200bb\.jpg$/.test(out) && !out.includes("{"));
+    // 允许后跟查询串：播放列表的模板带 `?l=`（目录语言参数），必须保留
+    check(`模板可展开且无残留占位符（${tpl.slice(-14)}）`, /200x200bb\.jpg(\?|$)/.test(out) && !out.includes("{"));
 }
 
 /*

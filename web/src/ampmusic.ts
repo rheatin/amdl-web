@@ -156,26 +156,34 @@ function enhancedHlsOf(item: { attributes?: RawAttrs } | undefined): string | un
 /**
  * 把封面的尺寸模板展开成指定像素的可用 URL。
  *
- * **模板的形状不是固定的**，这是踩过的坑：mzstatic 对不同商店/不同记录给出的
- * 占位符并不一致，实测见过三种
- *   `…/xxx.rgb.jpg/{w}x{h}{f}`      展开成 `300x300bb.jpg`
- *   `…/JAY.jpg/{w}x{h}bb.jpg`      展开成 `300x300bb.jpg`（位深已写死在模板里）
- *   `…/xxx.jpg/{w}x{h}.jpg`        展开成 `300x300bb.jpg`
- * 只认第一种的话，其余两种会拼出 `…/{w}x{h}bb.jpg/300x300bb.jpg` 这种垃圾串，
- * 浏览器拿到 404 而且**页面不会报任何错**（<img> 加载失败只是空图）。
+ * **模板的形状不是固定的**，这是踩过的坑。实测见过五种：
  *
- * 做法：先把整段"尺寸 + 位深 + 扩展名"的尾巴替换掉，位深一律固定成 `bb`
- * —— 实测 `600x600dd.jpg` 是 404，只有 bb 可用。
- * 格式默认 jpg；要 webp 时同时把扩展名换掉（1200x1200bb.webp 实测可用）。
+ *   `…/xxx.rgb.jpg/{w}x{h}{f}`          → `300x300bb.jpg`
+ *   `…/JAY.jpg/{w}x{h}bb.jpg`            → `300x300bb.jpg`
+ *   `…/xxx.jpg/{w}x{h}.jpg`              → `300x300bb.jpg`
+ *   `…/xxx.png/{w}x{h}SC.DN01.jpg?l=..`  → `300x300bb.jpg`   （播放列表）
+ *   `…/xxx.sca1.jpg/{w}x{h}mv.jpg`        → `300x300bb.jpg`   （音乐视频）
  *
- * 保留模板而不是提前定死尺寸，是因为界面要按显示大小取图：
- * 列表小图 160、卡片 300、放大预览 600/1200 全都不一样。
+ * 只认第一种会拼出 `…/{w}x{h}bb.jpg/300x300bb.jpg` 这种垃圾串；
+ * 而后两种的尾巴是 `SC.DN01.jpg` / `mv.jpg`，不是 `bb` —— 只吃掉
+ * `bb|dd|cc` 会把 `<尺寸>bb.jpg` 拼在残余尾巴前面，
+ * 得到 `…/200x200bb.jpgSC.DN01.jpg`，mzstatic 直接 400。
+ *
+ * 而且这类失败**完全静默**：<img> 加载不到只是空图，控制台没有任何报错。
+ *
+ * 所以做法是：从 `{w}` 开始**吃掉到查询串之前的整段尾巴**，再换上我们自己的规格。
+ * 保留 `?l=` 这类查询参数（它是本地化参数，与尺寸无关）。
  */
 export function artworkAt(template: string, size: number, format: "jpg" | "webp" = "jpg"): string {
     if (!template) return "";
     if (!template.includes("{w}")) return template;
-    // 吃掉 "{w}x{h}" 连同它后面紧跟的东西：位深段（bb/dd/cc）、点扩展名、或 {f} 占位符
-    return template.replace(/\{w\}x\{h\}(?:bb|dd|cc)?(?:\.\w+|\{f\})?/, `${size}x${size}bb.${format}`);
+    /*
+     * `\{w\}.*?` 里的 `*?` 是懒匹配，配合后面的 `(?=\?|$)` 锚点：
+     *   · 有查询串时，停在 `?` 之前（保留 ?l= 之类）
+     *   · 没有查询串时，吃到字符串末尾
+     * 这样 `{f}` / `bb.jpg` / `SC.DN01.jpg` / `mv.jpg` / `.jpg` 全都能吃掉。
+     */
+    return template.replace(/\{w\}.*?(?=\?|$)/, `${size}x${size}bb.${format}`);
 }
 
 export async function searchCatalog(
@@ -219,6 +227,77 @@ export async function searchCatalog(
     // 免得用户搜歌名时被一堆 Lyric Video 顶下去）。
     const order: Record<string, number> = { song: 0, album: 1, artist: 2, "music-video": 3 };
     out.sort((x, y) => (order[x.type] ?? 9) - (order[y.type] ?? 9));
+    return out;
+}
+
+/* ------------------------------------------------------------------ charts */
+
+/**
+ * 榜单（Top Charts）。
+ *
+ * 用**公开开发者 token** 就能取，不需要 Apple 账号 —— 实测
+ * `/v1/catalog/{sf}/charts?types=albums,songs,playlists,music-videos` 返回 200。
+ * （对照：`/v1/editorial/...` 那条「New Music」路径需要 media-user-token，
+ *   当前实测 400，所以只做榜单，不做 New。）
+ *
+ * 返回结构与搜索不同：每个类型下面是一个**榜单数组**，每个榜单再带 data：
+ *   results.songs[0].name = "热门歌曲排行"
+ *   results.songs[0].data = [ …条目… ]
+ * 这里取每个类型的**第一个榜单**（Apple 当前只给一个），并把榜单名一起带回去，
+ * 界面可以显示「热门歌曲排行」而不是干巴巴一个标题。
+ */
+export type ChartSection = {
+    /** 单数类型：song / album / playlist / music-video */
+    type: string;
+    /** 榜单名，例如「热门歌曲排行」 */
+    chartName: string;
+    items: SearchItem[];
+};
+
+export async function fetchCharts(
+    limit = 12,
+    storefrontOverride?: string
+): Promise<ChartSection[]> {
+    const raw = await catalogGet(
+        `/v1/catalog/${encodeURIComponent(pickStorefront(storefrontOverride))}/charts`,
+        {
+            types: "songs,albums,playlists,music-videos",
+            limit: String(limit),
+            // 与搜索一致：带上 enhancedHls，音质明细不必再问 wrapper
+            extend: "extendedAssetUrls"
+        }
+    );
+    const body = raw as Record<string, unknown> | null;
+    if (!body) return [];
+    const results = (body["results"] ?? {}) as Record<string, Array<{ name?: string; data?: RawItem[] }>>;
+
+    const out: ChartSection[] = [];
+    for (const [key, charts] of Object.entries(results)) {
+        const chart = charts?.[0];
+        if (!chart) continue;
+        const items: SearchItem[] = (chart.data ?? []).map((item) => {
+            const a = item.attributes ?? {};
+            return {
+                id: item.id ?? "",
+                // 榜单里 type 也是复数（songs/albums/playlists/music-videos），
+                // 与搜索保持一致的归一化，否则下游按单数比较全部落空
+                type: (item.type ?? key).replace(/s$/, ""),
+                name: a.name ?? "(untitled)",
+                artistName: a.artistName ?? "",
+                albumName: a.albumName ?? "",
+                artwork: a.artwork?.url ?? "",
+                url: a.url ?? "",
+                trackCount: a.trackCount,
+                releaseDate: a.releaseDate,
+                durationMs: a.durationInMillis,
+                enhancedHls: enhancedHlsOf(item)
+            };
+        });
+        if (items.length > 0) out.push({ type: key.replace(/s$/, ""), chartName: chart.name ?? "", items });
+    }
+    // 固定顺序：歌 → 专辑 → 播放列表 → MV（与搜索的排序理由相同）
+    const order: Record<string, number> = { song: 0, album: 1, playlist: 2, "music-video": 3 };
+    out.sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9));
     return out;
 }
 

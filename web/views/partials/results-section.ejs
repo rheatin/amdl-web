@@ -7,8 +7,10 @@
        浏览器端只能在响应回来后再造一个空 <ul>，布局就会闪一下。所以容器常驻，
        空态交给 `#search-empty` 这段文案。
     2. 计数与状态行放在同一行：它既是「结果（N）」这个标题，也是流式进度
-       （已找到 · 正在补全音质 · 完成）的落点，避免多出一行只在某一瞬间有意义的文字。
-    3. 卡片网格常驻空网格骨架：流式期间第一批卡片到达前，页面不该是一块空白。
+       （已找到 · 正在补全音质 · 完成）的落点。
+    3. **分类页签**：Apple 一次返回歌曲/专辑/艺人/播放列表/MV 五类，混在一个网格里
+       会让人找不到"只想看专辑"的路。页签是纯客户端过滤（卡片都已在 DOM 里），
+       所以切换是即时的，不再发请求。
 %>
 <section class="card" data-results data-stream-state="<%= q && !error ? "loading" : "idle" %>">
     <div class="head-row">
@@ -20,6 +22,19 @@
     <% } else if (!q) { %>
         <p class="muted">输入关键词开始搜索。可以搜歌名、歌手、专辑名，也可以直接粘贴 Apple Music 链接。</p>
     <% } else { %>
+        <%#
+            页签在"有结果"时才出现：没有结果时一排空页签只会显得界面坏了。
+            计数由客户端按实际卡片数填（见 search.js），因为流式是逐条到达的。
+        %>
+        <div class="tabs cat-tabs" role="tablist" data-cat-tabs>
+            <button class="tab" role="tab" data-cat="all" aria-selected="true">全部 <span class="n" data-cat-count="all"></span></button>
+            <button class="tab" role="tab" data-cat="song" aria-selected="false">歌曲 <span class="n" data-cat-count="song"></span></button>
+            <button class="tab" role="tab" data-cat="album" aria-selected="false">专辑 <span class="n" data-cat-count="album"></span></button>
+            <button class="tab" role="tab" data-cat="artist" aria-selected="false">艺人 <span class="n" data-cat-count="artist"></span></button>
+            <button class="tab" role="tab" data-cat="playlist" aria-selected="false">播放列表 <span class="n" data-cat-count="playlist"></span></button>
+            <button class="tab" role="tab" data-cat="music-video" aria-selected="false">MV <span class="n" data-cat-count="music-video"></span></button>
+        </div>
+
         <p id="search-empty" class="muted"<% if (results && results.length > 0) { %> hidden<% } %>>没有找到「<%= q %>」的结果。换关键词或换一下商店地区试试（Apple 的目录按地区分开）。</p>
         <ul class="wall" data-results-list>
             <% if (results && results.length > 0) { %>

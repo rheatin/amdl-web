@@ -121,6 +121,20 @@
         <% if (jobs.length === 0) { %>
             <div class="empty">队列是空的。把上面的链接或歌名加进来。</div>
         <% } %>
+        <%#
+            榜单：队列为空时它就是首屏内容，有队列时可折叠。
+
+            用 /api/charts 客户端拉取而不是服务端直出，是因为它是**次要内容**：
+            Apple 那边偶发抽风（或 NAS 出口抖动）时，工作台本身不该因此变慢或报错。
+            取不到就整块不显示，用户根本不会注意到 —— 这比在首屏挂一个红框好。
+        %>
+        <section class="card" id="charts" hidden>
+            <div class="head-row">
+                <h2 class="card-title">热门榜单</h2>
+                <span class="label" id="charts-state">加载中</span>
+            </div>
+            <div id="charts-body"></div>
+        </section>
     </div>
 
     <div class="bench-side">

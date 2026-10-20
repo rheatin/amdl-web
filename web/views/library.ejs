@@ -88,6 +88,24 @@ const coverUrl = (tpl) => {
                 <% } %>
                 <%# 首数角标：不展开也知道这张专辑有几首 %>
                 <span class="album-count"><%= g.tracks.length %></span>
+                <%#
+                    曲目列表从**封面内部**自下而上推出，和搜索结果的下载面板同一套手法。
+
+                    之前它是贴在整张卡片底部的绝对定位块，于是盖住了标题下方的
+                    艺人名和芯片 —— 截图里那个"半透明框里一团黑字"就是它。
+                    放进 .album-art 之后：封面有 overflow:hidden，面板被裁在图片内，
+                    永远压不到卡片里的文字。
+                %>
+                <div class="album-panel">
+                    <ul class="album-tracks">
+                        <% g.tracks.forEach(function (t) { %>
+                            <li>
+                                <span class="ellipsis"><%= t.song %></span>
+                                <% if (t.durationMs) { %><span class="num"><%= Math.floor(t.durationMs / 60000) %>:<%= String(Math.floor((t.durationMs / 1000) % 60)).padStart(2, "0") %></span><% } %>
+                            </li>
+                        <% }) %>
+                    </ul>
+                </div>
             </div>
             <div class="album-info">
                 <h2 class="album-title ellipsis" title="<%= g.album %>"><%= g.album %></h2>
@@ -96,19 +114,6 @@ const coverUrl = (tpl) => {
                     <span class="q-chip"><%= MB(g.bytes) %></span>
                     <a class="q-chip" href="/?job=<%= g.jobIds[0] %>" title="下载这个任务">#<%= g.jobIds[0] %></a>
                 </div>
-            </div>
-            <%# 曲目列表悬停/聚焦才展开：11 首常驻会把网格行撑得很高，
-                而"下全了没有"是偶尔才需要核对的事。 %>
-            <div class="album-detail">
-                <ul class="album-tracks">
-                    <% g.tracks.forEach(function (t) { %>
-                        <li>
-                            <span class="ellipsis"><%= t.song %></span>
-                            <% if (t.durationMs) { %><span class="muted num"><%= Math.floor(t.durationMs / 60000) %>:<%= String(Math.floor((t.durationMs / 1000) % 60)).padStart(2, "0") %></span><% } %>
-                            <% if (t.size) { %><span class="muted num"><%= MB(t.size) %></span><% } %>
-                        </li>
-                    <% }) %>
-                </ul>
             </div>
         </article>
     <% }) %>
