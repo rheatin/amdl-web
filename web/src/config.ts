@@ -107,10 +107,22 @@ fs.mkdirSync(config.dataDir, { recursive: true });
 /**
  * 目录查询用的 storefront / language **以引擎 config.yaml 为准**，.env 只作兜底。
  * 这样「一个地方配地区」：config.yaml 里写 cn，网页搜索、编码探测、下载元数据全都跟着变。
- * 只在首次访问时读一次；改完 config.yaml 需要重启容器（bind mount 的 inode 问题，见 README）。
+ * 只在首次访问时读一次；网页写回配置后由 clearLocaleCache() 显式失效（原地写保住 inode，不需要重启）。
  */
 let storefrontCache: string | null = null;
 let languageCache: string | null = null;
+
+/*
+ * 清掉本地缓存 —— 网页写回 config.yaml 后必须调用，否则「改了没反应」。
+ *
+ * 在这里导出（而不是让 engineconf 反向通知）：config 已经依赖 engineconf，
+ * 反过来就是环。用回调注册曾经试过，触发的是 TDZ 错误
+ * （config.js 在 engineconf.js 求值中途被加载，`let` 还没初始化）。
+ */
+export function clearLocaleCache(): void {
+    storefrontCache = null;
+    languageCache = null;
+}
 
 export function storefront(): string {
     if (storefrontCache) return storefrontCache;

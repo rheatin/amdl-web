@@ -120,8 +120,12 @@ services:
     volumes:
       # 引擎的配置 —— 下载语义（音质/歌词/命名/转码/地区/Apple 凭据）的唯一出处。
       # 每个任务都会复制这份文件再叠加几个覆盖键，所以这里的改动对新任务立即生效。
-      # 注意：单文件 bind mount 绑定的是 inode，**原地编辑后必须重启容器**才看得到。
-      - ./config.yaml:/engine/config.yaml:ro
+      #
+      # 可写（不带 :ro）：网页的「配置 → 下载设置」直接写回这个文件。
+      # 写回是**原地**的（同一 inode），所以改完立即生效，不需要重启容器 ——
+      # rename / sed -i 会换 inode，那样容器里看到的还是旧文件。
+      # 备份不写在这里（目录属于 root），见 engineconf.writeEngineConfigTo。
+      - ./config.yaml:/engine/config.yaml
       # 前端自身状态（账号、任务记录、会话密钥）
       - ./data/web:/data
       # 音乐落盘

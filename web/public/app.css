@@ -3070,3 +3070,96 @@ button.link {
         opacity: 1;
     }
 }
+
+/* --- 配置表单 ---------------------------------------------------------- */
+/*
+ * 用 grid 而不是 flex：标签宽度要**整列对齐**（不同长度的中文标签
+ * 用 flex 会各自算宽度，看起来像歪的）。110px 够放最长的「ALAC 采样率上限（Hz）」。
+ */
+.cfg-group {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3) var(--space-4);
+    margin: 0 0 var(--space-4);
+}
+
+.cfg-group legend {
+    padding: 0 var(--space-2);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--fg);
+}
+
+.cfg-hint {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--muted);
+}
+
+.cfg-row {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: var(--space-3);
+    align-items: center;
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.cfg-row:last-child {
+    border-bottom: none;
+}
+
+.cfg-row > label {
+    font-size: var(--text-sm);
+    color: var(--muted);
+}
+
+.cfg-input {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.cfg-input input,
+.cfg-input select {
+    max-width: 220px;
+}
+
+/* 实际写入的键：小字、低对比 —— 只在「想看它到底改哪一行」时才需要 */
+.cfg-path {
+    font-size: var(--text-xs);
+    color: var(--muted);
+    opacity: 0.6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cfg-row.changed .cfg-path {
+    opacity: 1;
+    color: var(--accent);
+}
+
+.cfg-row.changed > label {
+    color: var(--fg);
+}
+
+.unit {
+    font-size: var(--text-xs);
+    color: var(--muted);
+}
+
+.cfg-actions {
+    align-items: center;
+    gap: var(--space-3);
+    padding-top: var(--space-2);
+}
+
+/* 窄屏：标签换到输入上方，否则 110px 会挤压输入框 */
+@media (max-width: 640px) {
+    .cfg-row {
+        grid-template-columns: 1fr;
+        gap: var(--space-1);
+    }
+}

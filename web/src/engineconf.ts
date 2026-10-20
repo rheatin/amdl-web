@@ -394,11 +394,40 @@ export function applyOverrides(text: string, overrides: Array<[string, OverrideV
     return out;
 }
 
-/** 顶层键：命中则整行替换，否则追加到文件末尾。 */
+/**
+ * 取出行尾注释（含它前面的空白）。
+ *
+ * 为什么要保留：这份配置几乎每行都带说明性注释（`alac-max: 192000  # ...`），
+ * 用户靠它判断该填什么。整行替换会把注释吃掉 —— 改个音质就把文档抹了。
+ *
+ * 只认**引号之外**、前面是空白的 `#`，否则 `storefront: "a#b"` 会被截断。
+ */
+function trailingComment(line: string): string {
+    let quote: string | null = null;
+    for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (quote) {
+            if (c === quote) quote = null;
+        } else if (c === '"' || c === "'") {
+            quote = c;
+        } else if (c === "#" && i > 0 && /[ \t]/.test(line[i - 1] ?? "")) {
+            let j = i;
+            while (j > 0 && /[ \t]/.test(line[j - 1] ?? "")) j--;
+            return line.slice(j);
+        }
+    }
+    return "";
+}
+
+/** 顶层键：命中则整行替换（保留行尾注释），否则追加到文件末尾。 */
 function writeTopLevel(text: string, key: string, value: OverrideValue): string {
     const line = `${key}: ${yamlScalar(value)}`;
-    const re = new RegExp(`^${escapeRegExp(key)}:(.*)$`, "m");
-    if (re.test(text)) return text.replace(re, line);
+    const re = new RegExp(`^(${escapeRegExp(key)}:[^\n]*)$`, "m");
+    const hit = re.exec(text);
+    if (hit) {
+        const old = hit[1] ?? "";
+        return text.slice(0, hit.index) + line + trailingComment(old) + text.slice(hit.index + old.length);
+    }
     return `${text}${text.endsWith("\n") ? "" : "\n"}${line}\n`;
 }
 
@@ -475,7 +504,9 @@ function insertKey(
                 break;
             }
             if (indent === level && new RegExp(`^${escapeRegExp(key)}\\s*:`).test(line.trimStart())) {
-                return text.slice(0, offset) + newLine + text.slice(lineEnd);
+                /* 保留行尾注释（见 trailingComment 的注释） */
+                const keep = value === null ? "" : trailingComment(line);
+                return text.slice(0, offset) + newLine + keep + text.slice(lineEnd);
             }
         }
         if (nl === -1) break;
@@ -583,3 +614,203 @@ function maskValue(v: string): string {
     if (v.length <= 8) return '"***"';
     return `"${v.slice(0, 4)}***${v.slice(-2)}"`;
 }
+
+/* ------------------------------------------------------------- 写回配置 */
+
+/**
+ * 可写的键（白名单）。值是**候选路径列表**，与 `KEYS` 同一套语义：
+ * 写的时候只在**文件里已经存在的那条路径**上改，绝不新增并行键。
+ *
+ * 为什么强调这一点：上游把扁平键改成了嵌套结构，用户文件里可能还是
+ * `embed-lrc: true`。如果一律按新路径 `metadata.lyrics.embed` 写，
+ * 结果是**同一个语义出现两行**，引擎读哪条取决于它的解析顺序 ——
+ * 用户改了界面、行为却可能没变。所以这里复用 KEYS 的候选表。
+ */
+const EDITABLE_KEYS: Record<string, readonly string[]> = {
+    alacMax: KEYS.alacMax,
+    atmosMax: KEYS.atmosMax,
+    aacType: KEYS.aacType,
+    mvMax: KEYS.mvMax,
+    mvAudioType: KEYS.mvAudioType,
+    storefront: KEYS.storefront,
+    language: KEYS.language,
+    lyricsEmbed: KEYS.lyricsEmbed,
+    lyricsSaveFile: KEYS.lyricsSaveFile,
+    lyricsType: KEYS.lyricsType,
+    lyricsExtra: KEYS.lyricsExtra,
+    lyricsFormat: KEYS.lyricsFormat
+};
+
+/** 每个可写项的取值约束。空数组 = 任意合法标量（但仍要过类型检查）。 */
+const EDITABLE_VALUES: Record<string, readonly string[]> = {
+    aacType: ["aac-lc", "aac", "aac-binaural", "aac-downmix"],
+    mvAudioType: ["atmos", "ac3", "aac"],
+    lyricsEmbed: ["true", "false"],
+    lyricsSaveFile: ["true", "false"],
+    lyricsType: ["lyrics", "syllable-lyrics"],
+    lyricsExtra: ["", "translation", "pronunciation"],
+    lyricsFormat: ["lrc", "ttml"]
+};
+
+/**
+ * 每项写入 YAML 时的**标量类型**。
+ *
+ * 不能一律按字符串写：`yamlScalar("false")` 会加引号（正确 —— 裸 false 会被读成布尔），
+ * 于是布尔键变成 `embed-lrc: "false"`，Go 的强类型结构体解析失败。
+ * 数值同理：`alac-max: "96000"` 也解析不了。
+ */
+type FieldType = "string" | "bool" | "int";
+
+const FIELD_TYPES: Record<string, FieldType> = {
+    alacMax: "int",
+    atmosMax: "int",
+    mvMax: "int",
+    aacType: "string",
+    mvAudioType: "string",
+    storefront: "string",
+    language: "string",
+    lyricsEmbed: "bool",
+    lyricsSaveFile: "bool",
+    lyricsType: "string",
+    lyricsExtra: "string",
+    lyricsFormat: "string"
+};
+
+export type EditableField = {
+    /** 语义名（与 KEYS 的键一致） */
+    name: string;
+    /** 当前生效值（原始字符串，未打码 —— 这些都不是凭据） */
+    value: string;
+    /** 实际写在文件里的那条路径（旧扁平键或新嵌套键） */
+    path: string;
+    /** 允许的取值；空表示自由输入 */
+    allowed: string[];
+    /** 是否是数值输入（界面用 number 控件） */
+    numeric: boolean;
+    /** 布尔开关 */
+    bool: boolean;
+};
+
+/** 列出界面上可编辑的字段及其当前值。 */
+export function editableFields(engineDir: string = config.engineDir): EditableField[] {
+    const cfg = tryLoadEngineConfig(engineDir);
+    const values = cfg?.values ?? {};
+    const out: EditableField[] = [];
+    for (const [name, candidates] of Object.entries(EDITABLE_KEYS)) {
+        /* 找到文件里**实际存在**的那条路径；都不存在就用首选路径（会新增） */
+        const path_ = candidates.find((c) => values[c] !== undefined) ?? candidates[0] ?? "";
+        out.push({
+            name,
+            value: values[path_] ?? "",
+            path: path_,
+            allowed: [...(EDITABLE_VALUES[name] ?? [])],
+            numeric: FIELD_TYPES[name] === "int",
+            bool: FIELD_TYPES[name] === "bool"
+        });
+    }
+    return out;
+}
+
+/** 校验一个待写入项。返回错误信息，或 null 表示通过。 */
+export function validateEditable(name: string, raw: unknown): string | null {
+    if (!(name in EDITABLE_KEYS)) return `不可修改的项：${name}`;
+    const v = String(raw ?? "").trim();
+    if (v.length > 200) return `${name} 太长`;
+    /* 换行会破坏「一行一个键」的结构，是这里唯一真正危险的输入 */
+    if (/[\r\n]/.test(v)) return `${name} 不能包含换行`;
+    if (FIELD_TYPES[name] === "int") {
+        if (!/^\d+$/.test(v)) return `${name} 必须是整数`;
+        const n = Number(v);
+        if (n <= 0 || n > 384000) return `${name} 超出合理范围（1–384000）`;
+    }
+    const allowed = EDITABLE_VALUES[name];
+    if (allowed && allowed.length > 0 && !allowed.includes(v)) {
+        return `${name} 只能是：${allowed.map((x) => x || "(空)").join(" / ")}`;
+    }
+    if (name === "storefront" && !/^[a-z]{2}$/.test(v)) return "地区必须是两位小写字母，如 cn / jp";
+    if (name === "language" && !/^[A-Za-z]{2,3}(-[A-Za-z0-9]+)*$/.test(v)) return "语言格式如 en-US / zh-Hans-CN";
+    return null;
+}
+
+/**
+ * 把若干项写回引擎的 `config.yaml`，并返回**实际写入的键**。
+ *
+ * ## 为什么必须原地写（不能用 rename）
+ *
+ * compose 里 `config.yaml` 是**单文件 bind mount**，绑定的是启动那一刻的
+ * **inode**。`rename`（以及 `sed -i`）会新建文件再改名，inode 变了 ——
+ * 容器里看到的仍是旧内容。这正是 README 里「改完要重启容器」那条坑的成因。
+ *
+ * `fs.writeFileSync` 直接写同一路径：Docker 的 bind mount 对「同一 inode 上的
+ * 内容变化」是实时可见的，所以**不需要重启**。
+ *
+ * ## 为什么先备份
+ *
+ * 这份文件是用户手写的（注释、顺序、未知键）。写坏它等于毁掉唯一的配置源，
+ * 所以每次写前留一份 `.bak`。
+ */
+export function writeEngineConfig(
+    updates: Array<{ name: string; value: unknown }>,
+    engineDir: string = config.engineDir
+): { file: string; backup: string; written: string[] } {
+    return writeEngineConfigTo(updates, engineDir, config.dataDir);
+}
+
+/**
+ * 同上，但显式指定备份目录。
+ *
+ * 为什么备份不能放在配置文件旁边：`/engine` 是 root 拥有的只读目录
+ * （compose 里只把 config.yaml 这一个**文件**挂进去），容器用户 1000
+ * 对目录没有写权限，`copyFile` 到 `/engine/config.yaml.bak` 会 EACCES。
+ * `/data` 是挂进来的可写卷，放那里。
+ */
+export function writeEngineConfigTo(
+    updates: Array<{ name: string; value: unknown }>,
+    engineDir: string,
+    backupDir: string
+): { file: string; backup: string; written: string[] } {
+    const cfg = loadEngineConfig(engineDir);
+
+    const overrides: Array<[string, OverrideValue]> = [];
+    const errors: string[] = [];
+    for (const u of updates) {
+        const err = validateEditable(u.name, u.value);
+        if (err) {
+            errors.push(err);
+            continue;
+        }
+        const candidates = EDITABLE_KEYS[u.name];
+        const path_ = candidates.find((c) => cfg.values[c] !== undefined) ?? candidates[0] ?? "";
+        if (!path_) continue;
+        const v = String(u.value ?? "").trim();
+        /* 按声明类型转成真正的标量：布尔/数值不能以字符串形式写（见 FIELD_TYPES） */
+        const type = FIELD_TYPES[u.name];
+        const scalar: OverrideValue =
+            type === "int" ? Number(v) : type === "bool" ? v === "true" : v;
+        overrides.push([path_, scalar]);
+    }
+    if (errors.length > 0) throw new Error(errors.join("；"));
+
+    const next = applyOverrides(cfg.text, overrides);
+    const backup = path.join(backupDir, "config.yaml.bak");
+    fs.mkdirSync(backupDir, { recursive: true });
+    fs.copyFileSync(cfg.file, backup);
+    try {
+        fs.writeFileSync(cfg.file, next, "utf8");
+    } catch (e) {
+        /*
+         * 只读挂载是最可能的失败原因，而报错原文（EROFS）对用户毫无指向性。
+         * 这里换成能直接行动的说明。
+         */
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === "EROFS" || code === "EACCES" || code === "EPERM") {
+            throw new Error(
+                `${cfg.file} 不可写（${code}）。检查 docker-compose.yml 里该文件的挂载是否仍带 :ro —— ` +
+                    `本功能要求去掉 :ro，改完需 docker compose up -d 重建容器。`
+            );
+        }
+        throw e;
+    }
+    return { file: cfg.file, backup, written: overrides.map(([k]) => k) };
+}
+

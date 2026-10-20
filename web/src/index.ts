@@ -42,18 +42,20 @@ import {
     seedAdmin,
     verifyPassword
 } from "./auth.js";
-import { config, language, storefront } from "./config.js";
+import { clearLocaleCache, config, language, storefront } from "./config.js";
 import { explicitJobOptions } from "./jobopts.js";
 import { cancelJob, enqueue, isActive, queueDepth, reconcileOnBoot, subscribe } from "./queue.js";
 import { resolveRegionPlan, regionLabel, type RegionDeps, type RegionPlan } from "./region.js";
 import { progressFromLog } from "./progress.js";
 import { engineConfigPath, jobConfigDir, removeJobConfigDir } from "./ripper.js";
 import {
+    editableFields,
     lyricOptionsFromConfig,
     maskConfigText,
     qualityCeilingsFromConfig,
     SECRET_KEYS,
-    tryLoadEngineConfig
+    tryLoadEngineConfig,
+    writeEngineConfig
 } from "./engineconf.js";
 import { sanitizeJobMeta, store } from "./store.js";
 import { normalizeRegion, parseAppleMusicUrl } from "./urlinfo.js";
@@ -638,11 +640,25 @@ app.get("/library", requireAuth, (_req: Request, res: Response) => {
 });
 
 /**
- * 「设置」页 = 只读的配置视图。
+ * 「设置」页：可编辑的引擎配置 + 只读的运行信息。
  *
- * 这里刻意**不可编辑**：下载语义以引擎 config.yaml 为唯一出处（用户直接编辑文件），
- * 部署相关的参数在 .env 里。网页只告诉你「现在实际生效的是什么、在哪里改」，
- * 避免出现第二份真相（两份配置互相覆盖是之前踩过的坑）。
+ * ## 改过的设计决定（2026-10-20）
+ *
+ * 此前这里**刻意只读**，理由是"避免两份真相"。那个担心是对的，但结论下错了：
+ *
+ *   · 真正的风险不是"网页能写"，而是**同时有两处能写同一件事**。这里写的就是
+ *     `config.yaml` 本身 —— 文件的 bind mount 让容器内外是同一个文件，不存在第二份。
+ *     写回也是原地改（保 inode），所以改完**立即生效**，不需要重启。
+ *   · 只读的代价更实际：手机上看完某个设置想改，得开 SSH 上 NAS 改文件。
+ *
+ * 保留的护栏：
+ *   · 白名单（engineconf.EDITABLE_KEYS）：凭据、落盘路径、代理一律不可写；
+ *   · 每项取值校验，换行直接拒绝（否则会破坏 YAML 单行结构）；
+ *   · 写前自动备份 `config.yaml.bak`；
+ *   · 页面底部仍然显示打码后的全文，用户随时能核对文件真实内容。
+ *
+ * 部署类参数（端口、并发、路径）仍然只在 `.env` —— 那些改了必须重建容器，
+ * 网页上给个假开关只会误导。
  */
 app.get("/settings", requireAuth, (_req: Request, res: Response) => {
     const engine = tryLoadEngineConfig();
@@ -652,6 +668,7 @@ app.get("/settings", requireAuth, (_req: Request, res: Response) => {
         storefront: storefront(),
         ceilings: qualityCeilingsFromConfig(),
         language: language(),
+        fields: editableFields(),
         engineFile: engine?.file ?? engineConfigPath(),
         engineText: engine ? maskConfigText(engine.text) : null,
         engineKeys: engine?.keys ?? [],
@@ -760,11 +777,11 @@ app.get("/api/jobs", requireAuth, (_req: Request, res: Response) => {
     res.json({ jobs, queue: queueDepth() });
 });
 
-/* --------------------------------------------------------- 配置（只读接口） */
+/* --------------------------------------------------------------- 配置接口 */
 
 /**
  * 只读地取回当前生效的配置，便于脚本/自检核对（凭据已打码）。
- * 没有写接口：改配置请编辑 config.yaml（下载语义）或 .env（部署），改完重启容器。
+ * 写入走 POST /api/config（见下），部署类参数仍只在 .env。
  */
 app.get("/api/config", requireAuth, (_req: Request, res: Response) => {
     const engine = tryLoadEngineConfig();
@@ -796,6 +813,55 @@ app.get("/api/config", requireAuth, (_req: Request, res: Response) => {
             values: engine?.values ?? {}
         }
     });
+});
+
+/**
+ * 写入引擎配置。
+ *
+ * 只有 `fields` 一项：`{ alacMax: "96000", lyricsEmbed: "false", ... }`。
+ * 只写**传上来的**键（不做"整表单覆盖"）—— 页面可能只渲染了一部分字段，
+ * 整表覆盖会把没渲染的键悄悄清空。
+ *
+ * 返回 `written`（实际改到的点分路径）与 `changed`（值与原来不同的那些），
+ * 界面据此提示「没有变化」而不是假装成功。
+ */
+app.post("/api/config", requireAuth, (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as { fields?: Record<string, unknown> };
+    const fields = body.fields;
+    if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+        res.status(400).json({ error: "需要 { fields: { ... } }" });
+        return;
+    }
+    const updates = Object.entries(fields).map(([name, value]) => ({ name, value }));
+    if (updates.length === 0) {
+        res.status(400).json({ error: "没有要写入的项" });
+        return;
+    }
+
+    /* 写入前先记下旧值，用来算 changed */
+    const before = editableFields();
+    const oldValue = (name: string): string | undefined => before.find((f) => f.name === name)?.value;
+    try {
+        const result = writeEngineConfig(updates);
+        /*
+         * 地区/语言是「首次访问即缓存」的（config.ts），必须显式清掉，
+         * 否则文件改了、搜索结果还是旧区。其它键每次读文件，无需处理。
+         */
+        clearLocaleCache();
+        const changed = updates
+            .filter((u) => oldValue(u.name) !== String(u.value ?? "").trim())
+            .map((u) => u.name);
+        res.json({
+            ok: true,
+            file: result.file,
+            backup: result.backup,
+            written: result.written,
+            changed,
+            fields: editableFields()
+        });
+    } catch (e) {
+        res.status(400).json({ error: (e as Error).message });
+    }
 });
 
 /* --------------------------------------------------------------- 任务接口 */

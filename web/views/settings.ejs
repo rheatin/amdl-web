@@ -3,28 +3,127 @@
 <section class="card">
     <h1>配置</h1>
     <p class="muted">
-        本页<strong>只读</strong>：这里显示的就是此刻真正生效的配置。要改配置请直接编辑下面标出的文件，
-        然后 <code>docker compose up -d</code> 重建容器 —— 少一份可写的副本，就少一处「两份配置互相覆盖」的坑。
+        下面的下载语义<strong>直接写回 <code><%= engineFile %></code> 本身</strong>，写完立即生效，
+        不需要重启容器 —— 写的是同一个文件，不存在「两份配置」。
+        每次写入前会自动留一份 <code>config.yaml.bak</code>。
     </p>
     <table class="table">
         <tbody>
             <tr>
-                <th>下载相关</th>
-                <td><code><%= engineFile %></code>
-                    <span class="muted small">（音质 / 歌词 / 命名 / 转码 / 地区 / Apple 凭据）</span></td>
+                <th>这里能改</th>
+                <td>音质上限 / 歌词 / 地区与语言
+                    <span class="muted small">（写进 <code>config.yaml</code>）</span></td>
             </tr>
             <tr>
-                <th>部署相关</th>
-                <td><code>.env</code>
-                    <span class="muted small">（端口 / 目录 / 权限 / 时区 / 代理 / 并发 / 站点管理员口令）</span></td>
+                <th>这里不能改</th>
+                <td>端口 / 目录 / 权限 / 时区 / 代理 / 并发 —— 在 <code>.env</code> 里
+                    <span class="muted small">（改了要重建容器，网页给个假开关只会误导）</span></td>
             </tr>
             <tr>
-                <th>随时可改</th>
-                <td>新建任务页上的<strong>「本次任务临时覆盖」</strong>
+                <th>Apple 凭据</th>
+                <td>不提供网页入口
+                    <span class="muted small">（<code>media-user-token</code> 属于账号侧，请直接编辑文件）</span></td>
+            </tr>
+            <tr>
+                <th>一次性的</th>
+                <td>新建任务页的<strong>「本次任务临时覆盖」</strong>
                     <span class="muted small">（只影响那一次下载，不落盘）</span></td>
             </tr>
         </tbody>
     </table>
+</section>
+
+<section class="card" id="engine-edit">
+    <h2 class="card-title">下载设置</h2>
+    <p class="muted small">
+        只列出<strong>能安全修改</strong>的项。文件里其它键（凭据、落盘路径、代理等）原样保留，
+        界面不会碰它们。
+    </p>
+    <% if (!fields || fields.length === 0) { %>
+        <div class="empty">读不到 <code><%= engineFile %></code>，无法编辑。</div>
+    <% } else { %>
+    <form id="engine-form">
+        <%
+        /* 分组只影响排版；顺序按实际使用频率排（音质最常改）。 */
+        const GROUPS = [
+            { title: "音质上限", hint: "指引擎实际取到的上限，不是 Apple 提供什么", names: ["alacMax", "atmosMax", "aacType"] },
+            { title: "MV", hint: "音乐视频由链接决定，这里只是画质上限", names: ["mvMax", "mvAudioType"] },
+            { title: "歌词", hint: "任务页仍可临时覆盖", names: ["lyricsEmbed", "lyricsSaveFile", "lyricsType", "lyricsExtra", "lyricsFormat"] },
+            { title: "地区与语言", hint: "影响搜索、编码探测与元数据语言", names: ["storefront", "language"] }
+        ];
+        const LABEL = {
+            alacMax: "ALAC 采样率上限（Hz）",
+            atmosMax: "Atmos 码率上限（kbps）",
+            aacType: "AAC 流配置",
+            mvMax: "MV 纵向分辨率上限",
+            mvAudioType: "MV 音轨",
+            lyricsEmbed: "把歌词写进标签",
+            lyricsSaveFile: "另存 .lrc 文件",
+            lyricsType: "歌词粒度",
+            lyricsExtra: "附加内容",
+            lyricsFormat: "歌词格式",
+            storefront: "店铺地区",
+            language: "元数据语言"
+        };
+        const UNIT = { alacMax: "Hz", atmosMax: "kbps", mvMax: "p" };
+        const OPTION_TEXT = {
+            "true": "开", "false": "关",
+            "lyrics": "逐行", "syllable-lyrics": "逐字",
+            "": "无", "translation": "翻译", "pronunciation": "罗马音",
+            "lrc": "LRC", "ttml": "TTML",
+            "aac": "aac", "aac-lc": "aac-lc", "aac-binaural": "aac-binaural", "aac-downmix": "aac-downmix",
+            "atmos": "atmos", "ac3": "ac3"
+        };
+        const byName = {};
+        fields.forEach(function (f) { byName[f.name] = f; });
+        %>
+        <% GROUPS.forEach(function (g) { %>
+            <fieldset class="cfg-group">
+                <legend><%= g.title %></legend>
+                <p class="cfg-hint"><%= g.hint %></p>
+                <% g.names.forEach(function (name) {
+                       const f = byName[name];
+                       if (!f) return; %>
+                    <div class="cfg-row" data-name="<%= name %>">
+                        <label for="cfg-<%= name %>"><%= LABEL[name] || name %></label>
+                        <div class="cfg-input">
+                            <% if (f.bool) { %>
+                                <select id="cfg-<%= name %>" name="<%= name %>">
+                                    <option value="true"<%= f.value === "true" ? " selected" : "" %>>开</option>
+                                    <option value="false"<%= f.value === "false" ? " selected" : "" %>>关</option>
+                                </select>
+                            <% } else if (f.allowed.length > 0) { %>
+                                <select id="cfg-<%= name %>" name="<%= name %>">
+                                    <% f.allowed.forEach(function (v) { %>
+                                        <option value="<%= v %>"<%= f.value === v ? " selected" : "" %>><%= OPTION_TEXT[v] || v %></option>
+                                    <% }); %>
+                                </select>
+                            <% } else { %>
+                                <%#
+                                  不加 pattern：HTML5 的 pattern 是"整值匹配"，写 [0-9]*
+                                  在 Chrome 上会让这三个本来合法的数字框全部校验失败，
+                                  表单直接提交不出去（按钮像坏了）。数值校验由服务端做，
+                                  它会回一条能看懂的错误；这里 inputmode 只负责唤起数字键盘。
+                                %>
+                                <input id="cfg-<%= name %>" name="<%= name %>"
+                                       value="<%= f.value %>"
+                                       <%= f.numeric ? 'inputmode="numeric"' : "" %>
+                                       placeholder="<%= f.value === "" ? "未设置（引擎用默认值）" : "" %>">
+                                <% if (UNIT[name]) { %><span class="unit"><%= UNIT[name] %></span><% } %>
+                            <% } %>
+                            <code class="cfg-path" title="实际写入的键"><%= f.path %></code>
+                        </div>
+                    </div>
+                <% }); %>
+            </fieldset>
+        <% }); %>
+        <div class="row cfg-actions">
+            <button type="submit" class="primary">保存并立即生效</button>
+            <button type="button" class="ghost" id="engine-revert">放弃修改</button>
+            <span id="engine-msg" class="muted small" role="status"></span>
+        </div>
+    </form>
+    <% } %>
 </section>
 
 <section class="card">
@@ -160,5 +259,9 @@
         会话会缓存进 wrapper 数据目录，之后口令可以不再提供。
     </p>
 </section>
+
+<%# settings.js 只在本页加载：配置表单与 2FA 提交都在这里；
+    app.js 保持跨页面通用（请求封装 + 操作委托 + 提示）。 %>
+<script src="/static/settings.js?v=<%= assetVersion %>" defer></script>
 
 <%- include("partials/foot") %>

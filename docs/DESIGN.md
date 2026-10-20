@@ -173,7 +173,9 @@ SSE 连接建立之前就已发出** —— 若 `hello` 只回放日志而不同
 |---|---|---|
 | `git clone` 失败但 `curl` 正常 | 部分网络环境下 git 的 TLS 被重置 | 用 `codeload` 拉 tarball（见 README） |
 | CMake `FetchContent` 拉不到依赖 | 其内部走 `git clone` | 依赖 vendor 到 `deps/` + `-DFETCHCONTENT_SOURCE_DIR_*` |
-| 改了挂载的 `config.yaml` 但容器里没变 | ① `sed -i` 会换 inode，而 bind mount 锁定启动时的 inode；② 单文件 bind mount 不跟随路径替换 | 修改后**重启容器**重新解析挂载；写入用 `cat > file` 原地覆盖 |
+| 改了挂载的 `config.yaml` 但容器里没变 | ① `sed -i` / `rename` 会换 inode，而 bind mount 锁定启动时的 inode；② 单文件 bind mount 不跟随路径替换 | 原地覆盖（`fs.writeFileSync` 同一路径），**不要** `sed -i`。网页写回走的就是这条路，因此无需重启 |
+| 网页写配置报 `EROFS` / `EACCES` | compose 里该文件挂载带 `:ro` | 去掉 `:ro`；容器用户（`user:`）需对该文件有写权限 |
+| 备份文件建不出来（`.bak` 报 `EACCES`） | `/engine` 目录属于 root，只把单文件挂了进去 | 备份写到 `/data`（可写卷），见 `writeEngineConfigTo` |
 | 网页提交 2FA 写不进 `data/wrapper/` | 上游 entrypoint 会 `chown -R root:root` 该目录 | 预置 `2fa.txt` 并 `chmod 666`（`chown` 不改模式位） |
 | rootless 启动器起不来 | 它需要在容器内挂载 procfs，部分内核不允许（`cap_add: SYS_ADMIN` 亦无效） | 使用 `privileged: true`（与上游 README 一致），或改用上游的 `wrapper-lite-qemu` |
 
