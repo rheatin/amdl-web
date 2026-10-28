@@ -1,0 +1,74 @@
+<%- include("partials/head") %>
+
+<%#
+  发现页（首页）—— 榜单为主，搜索收在按钮后面。
+
+  为什么把搜索折起来：搜索是"我有明确目标"时才用的动作，而首页
+  该回答的是"有什么可听"。常驻一个大输入框会让页面第一眼像个搜索工具，
+  把榜单挤到折叠线以下 —— 而榜单才是没有目标时唯一有用的东西。
+
+  搜索仍然是一等公民：点一下按钮就展开并自动聚焦，回车即搜。
+%>
+
+<section class="hero discover-hero">
+    <div class="discover-head">
+        <h1 class="discover-title">发现</h1>
+        <%#
+          折叠式搜索。用 <details> 而不是自己写开关：
+          键盘展开/收起、aria-expanded、焦点管理都是浏览器自带的，
+          手写这三样很容易漏掉其一（尤其是键盘）。
+        %>
+        <details class="search-fold" id="search-fold">
+            <summary class="search-toggle">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                    <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+                </svg>
+                <span>搜索</span>
+            </summary>
+            <form class="hero-bar search-fold-bar" action="/search" method="get" role="search">
+                <div class="hero-field">
+                    <input id="discover-q" name="q" placeholder="歌名 / 艺人 / 专辑…" autocomplete="off" required
+                           aria-label="搜索 Apple Music">
+                </div>
+                <%- include("partials/region-select", { name: "region", id: "discover-region", selected: "", inheritLabel: `默认（${defaultRegionLabel}）` }) %>
+                <button type="submit" class="hero-go">搜索</button>
+            </form>
+        </details>
+    </div>
+</section>
+
+<%#
+  榜单容器。data-region 供卡片拼详情页链接：榜单是按这个商店取的，
+  跳转时要带上，否则点进专辑会落到别的区的记录上。
+
+  没有 hidden：首页的榜单就是主角，不再"有任务时才显示"。
+  取不到时由 charts.js 把整块藏起来（不留红框）。
+%>
+<section class="card discover-charts" id="charts" data-region="<%= telemetry ? telemetry.storefront : "" %>">
+    <div class="head-row">
+        <h2 class="card-title">热门榜单</h2>
+        <span class="label" id="charts-state">加载中</span>
+    </div>
+    <div id="charts-body"></div>
+</section>
+
+<script src="/static/charts.js?v=<%= assetVersion %>" defer></script>
+
+<script>
+    /*
+     * 展开搜索时把焦点放进输入框 —— 点了"搜索"却还要再点一次输入框，
+     * 是这类折叠控件最常见的粗糙之处。
+     *
+     * 只在展开时聚焦（toggle 为 open），收起时不抢焦点。
+     */
+    (function () {
+        const fold = document.getElementById("search-fold");
+        const input = document.getElementById("discover-q");
+        if (!fold || !input) return;
+        fold.addEventListener("toggle", function () {
+            if (fold.open) input.focus();
+        });
+    })();
+</script>
+
+<%- include("partials/foot") %>

@@ -192,3 +192,200 @@ export function cacheStats(): { files: number; bytes: number; limit: number } {
 export function keyForPath(absPath: string): string {
     return crypto.createHash("sha1").update(absPath).digest("hex");
 }
+
+/**
+ * 边转边发：ffmpeg 的输出同时写进缓存文件和调用方的回调。
+ *
+ * ## 为什么要这个
+ *
+ * `transcodeToCache` 要等整首转完才返回 —— 实测 4 分钟曲目 1.8 s，
+ * 而且随曲长线性增长（10 分钟约 4 s）。用户点播放后要干等这么久。
+ *
+ * 但 FLAC 是**可流式**的（不需要 seektable），ffmpeg 写到 stdout 的第一个
+ * 64 KB 只要 292 ms。所以首播走这条路：立刻出声，同时后台把整首落进缓存，
+ * 下次就是 7 ms 的命中。
+ *
+ * ## 客户端中途断开怎么办
+ *
+ * 继续把 ffmpeg 读完并写完缓存 —— 断开的是浏览器，不是转码。
+ * 这样用户拖回去再听、或者另一台设备来播，缓存都已经在。
+ */
+export async function transcodeStream(
+    sourceFile: string,
+    trackId: string,
+    onChunk: (chunk: Buffer) => void,
+    /**
+     * 源时长（毫秒），来自建单时探到的目录信息。
+     *
+     * 有它就完全不碰 ffprobe：采样率从 FLAC 头里读，两者相乘即得总样本数。
+     * 没有（老任务/元数据缺失）才回落到 ffprobe。
+     */
+    durationMs?: number
+): Promise<string> {
+    const out = cachePath(trackId);
+    fs.mkdirSync(cacheDir(), { recursive: true });
+    const tmp = `${out}.part`;
+
+    /*
+     * 管道输出的 FLAC 头里 total_samples 是 0，不补的话浏览器拿不到时长、
+     * 进度条就废了（见 patchTotalSamples）。
+     *
+     * 有 durationMs 时不预先算：等第一个数据块到了，从它自己的头里读采样率，
+     * 再乘时长。省掉一次 ffprobe（28 ms，占首播延迟的四分之一）。
+     */
+    let totalSamples = 0;
+    if (durationMs === undefined || !(durationMs > 0)) {
+        try {
+            const { durationSec, sampleRate } = await probeAudio(sourceFile);
+            totalSamples = Math.round(durationSec * sampleRate);
+        } catch {
+            /* 探不到就不补 —— 能播，只是没有时长，不该因此拒绝播放 */
+        }
+    }
+    let patched = false;
+
+    return new Promise<string>((resolve, reject) => {
+        const ff = spawn(
+            "ffmpeg",
+            [
+                "-y", "-v", "error",
+                "-i", sourceFile,
+                "-vn",
+                "-c:a", "flac",
+                "-compression_level", "5",
+                "-map_metadata", "0",
+                "-f", "flac",
+                "-"
+            ],
+            { stdio: ["ignore", "pipe", "pipe"] }
+        );
+
+        const sink = fs.createWriteStream(tmp);
+        let stderr = "";
+        let settled = false;
+
+        const fail = (e: Error) => {
+            if (settled) return;
+            settled = true;
+            sink.destroy();
+            fs.rmSync(tmp, { force: true });
+            reject(e);
+        };
+
+        ff.stderr.on("data", (d: Buffer) => {
+            stderr += d.toString();
+        });
+
+        ff.stdout.on("data", (chunk: Buffer) => {
+            /* 只在第一个数据块上补头，且补一次就够 */
+            if (!patched) {
+                const total = totalSamples > 0
+                    ? totalSamples
+                    : Math.round(((durationMs ?? 0) / 1000) * flacSampleRate(chunk));
+                if (total > 0) patched = patchTotalSamples(chunk, total);
+            }
+            sink.write(chunk);
+            /*
+             * 回调抛错（通常是响应已关闭）不该中断转码 —— 缓存还要写。
+             * 所以这里吞掉异常，只记一次。
+             */
+            try {
+                onChunk(chunk);
+            } catch {
+                /* 忽略：调用方会自己判断 */
+            }
+        });
+
+        ff.on("error", (e) => fail(new Error(`无法启动 ffmpeg：${e.message}`)));
+        ff.on("close", (code) => {
+            if (settled) return;
+            if (code !== 0) {
+                fail(new Error(`ffmpeg 转换失败（退出码 ${code}）：${stderr.slice(-400)}`));
+                return;
+            }
+            sink.end(() => {
+                try {
+                    fs.renameSync(tmp, out);
+                } catch (e) {
+                    fail(e as Error);
+                    return;
+                }
+                settled = true;
+                evict();
+                resolve(out);
+            });
+        });
+    });
+}
+
+/**
+ * 读源文件的时长与采样率（不解码，几十毫秒）。
+ *
+ * 用途只有一个：补 FLAC 头里的 total_samples（见 patchTotalSamples）。
+ */
+export async function probeAudio(file: string): Promise<{ durationSec: number; sampleRate: number }> {
+    return new Promise((resolve, reject) => {
+        const ff = spawn("ffprobe", [
+            "-v", "error",
+            "-select_streams", "a:0",
+            "-show_entries", "stream=sample_rate,duration",
+            "-of", "default=nw=1",
+            file
+        ], { stdio: ["ignore", "pipe", "pipe"] });
+
+        let out = "";
+        ff.stdout.on("data", (d: Buffer) => (out += d.toString()));
+        ff.on("error", (e) => reject(new Error(`无法启动 ffprobe：${e.message}`)));
+        ff.on("close", () => {
+            const rate = Number(/sample_rate=(\d+)/.exec(out)?.[1] ?? 0);
+            const dur = Number(/duration=([\d.]+)/.exec(out)?.[1] ?? 0);
+            if (!rate || !dur) reject(new Error(`读不到音频参数：${out.trim()}`));
+            else resolve({ durationSec: dur, sampleRate: rate });
+        });
+    });
+}
+
+/**
+ * 从 FLAC 头读采样率（20 位，位于 byte 18..20 的高位）。
+ *
+ * 有了它就不必为"补总样本数"去起一个 ffprobe 子进程 —— 采样率本来就在
+ * 我们要改的那几个字节旁边。实测 ffprobe 要 28 ms，而首播总延迟才 ~100 ms。
+ */
+export function flacSampleRate(buf: Buffer): number {
+    if (buf.length < 21 || buf.subarray(0, 4).toString("latin1") !== "fLaC") return 0;
+    return ((buf[18] ?? 0) << 12) | ((buf[19] ?? 0) << 4) | ((buf[20] ?? 0) >> 4);
+}
+
+/**
+ * 把 FLAC 的 STREAMINFO.total_samples 补上。
+ *
+ * ## 为什么必须补
+ *
+ * ffmpeg 往**管道**写 FLAC 时写不出总样本数（管道不可 seek，它算不出最终长度），
+ * 于是 STREAMINFO 里这一项是 0。后果很具体：浏览器拿不到 duration，
+ * 进度条显示 0:00、也判定不了能不能 seek。
+ *
+ * 实测对比（同一首歌）：
+ *   管道输出  … 12 00 12 00 00 00 00 00 6e 5a 0b b8 03 70 | 00 00 00 00 00 …
+ *   文件输出  … 12 00 12 00 00 02 36 00 5e a8 0b b8 03 70 | 00 b0 25 c0 f6 …
+ *                                                          ^^ total_samples
+ *
+ * ## 字段位置
+ *
+ * `fLaC`(4) + 块头(4) + STREAMINFO 前 10 字节之后是：
+ *   byte 18..20  采样率(20 位) + 声道(3) + 位深(5) 的前半
+ *   byte 21      位深低 4 位 + total_samples 的高 4 位
+ *   byte 22..25  total_samples 的低 32 位
+ * 所以 36 位的 total_samples = (b21 & 0x0F) << 32 | b22..b25。
+ *
+ * 只改这 5 个字节里的低位，其余（采样率、声道、位深）原样不动。
+ */
+export function patchTotalSamples(buf: Buffer, totalSamples: number): boolean {
+    if (buf.length < 26) return false;
+    if (buf.subarray(0, 4).toString("latin1") !== "fLaC") return false;
+
+    const hi = (totalSamples / 0x100000000) & 0x0f;
+    buf[21] = ((buf[21] ?? 0) & 0xf0) | hi;
+    buf.writeUInt32BE(totalSamples >>> 0, 22);
+    return true;
+}

@@ -13,7 +13,12 @@ import fs from "node:fs";
  * 用静态断言而不是跑无头浏览器：这些是"字符串契约"，读源码就能验，
  * 跑浏览器成本高得多、还依赖网络。
  */
-const ui = fs.readFileSync(new URL("../public/workbench.js", import.meta.url), "utf8");
+/*
+ * 榜单代码从 workbench.js 拆到了 charts.js（首页与任务页不再同屏）。
+ * 两条字符串契约横跨两个文件，所以拼起来一起断言 —— 拆文件不该让测试变松。
+ */
+const ui = fs.readFileSync(new URL("../public/workbench.js", import.meta.url), "utf8") +
+    fs.readFileSync(new URL("../public/charts.js", import.meta.url), "utf8");
 const searchJs = fs.readFileSync(new URL("../public/search.js", import.meta.url), "utf8");
 const resultsTpl = fs.readFileSync(new URL("../views/partials/results-section.ejs", import.meta.url), "utf8");
 const rowTpl = fs.readFileSync(new URL("../views/partials/result-item.ejs", import.meta.url), "utf8");

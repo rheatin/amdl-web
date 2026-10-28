@@ -57,7 +57,7 @@ import {
     tryLoadEngineConfig,
     writeEngineConfig
 } from "./engineconf.js";
-import { cachePath, isCached, keyForPath, transcodeToCache } from "./playcache.js";
+import { cachePath, isCached, keyForPath, transcodeStream, transcodeToCache } from "./playcache.js";
 import { sanitizeJobMeta, store } from "./store.js";
 import { normalizeRegion, parseAppleMusicUrl } from "./urlinfo.js";
 
@@ -512,7 +512,7 @@ app.post("/logout", (req: Request, res: Response) => {
  * 任务总数在两位数量级；真正的筛选交给前端的页签（客户端过滤，见 app.js），
  * 服务端不截断 —— 否则"我明明有 102 个任务，列表里只有 8 个"会很困惑。
  */
-app.get("/", requireAuth, (req: Request, res: Response) => {
+app.get("/jobs", requireAuth, (req: Request, res: Response) => {
     const jobs = store.jobs().slice().reverse().map((j) => ({ ...j, progress: progressFromLog(j.log) }));
     const activeCount = jobs.filter((j) => j.status === "queued" || j.status === "running").length;
     const finishedCount = jobs.length - activeCount;
@@ -579,22 +579,18 @@ app.get("/search", requireAuth, async (req: Request, res: Response) => {
     });
 });
 
-/*
- * /jobs → 工作台。
+/**
+ * 发现页（首页）—— 榜单为主，搜索收在按钮后面。
  *
- * 这一页原本是"任务列表 + 右栏详情"的双栏页，但它与工作台**讲的是同一件事**，
- * 只是老版布局。既然界面已经合成单屏，留着两个入口只会让人以为它们是两种视图。
- * 所以这里做 302 而不是删路由：书签、旧消息、深链都还能用，
- * 带 ?job=<id> 的链接会正确落到那条任务的检视器上。
+ * 为什么不在这里渲染队列：队列是"我正在做什么"，榜单是"有什么可听"。
+ * 两者放同一屏时，队列一长就把榜单挤到折叠线以下 —— 而没有任务时
+ * 首屏又是空的一大片。拆成两个页签之后各自都能占满屏。
  */
-app.get("/jobs", requireAuth, (req: Request, res: Response) => {
-    const id = Number(req.query["job"]);
-    if (Number.isFinite(id)) {
-        const job = store.job(id);
-        res.redirect(job ? `/?job=${job.id}` : "/");
-        return;
-    }
-    res.redirect("/");
+app.get("/", requireAuth, (_req: Request, res: Response) => {
+    res.render("discover", {
+        defaultRegionLabel: regionLabel(storefront()),
+        config
+    });
 });
 
 /**
@@ -727,27 +723,62 @@ app.get("/api/play", requireAuth, async (req: Request, res: Response) => {
     }
 
     const key = keyForPath(track.path);
-    try {
-        if (!isCached(key)) {
-            /*
-             * 首次播放要转一次（约 1 秒）。期间客户端会等待 —— 所以先不发头，
-             * 让 fetch 自然等；转完再 sendFile。
-             */
-            await transcodeToCache(track.path, key);
+
+    /*
+     * 两条路径，取决于浏览器要的是"整首"还是"某一段"：
+     *
+     *   整首（无 Range，或 `bytes=0-`）→ **边转边发**，约 0.3 s 出声
+     *   某一段（`bytes=N-`，N>0）      → 必须等缓存完整，再走 sendFile 的 206
+     *
+     * Chrome 的 <audio> 首次加载发的是 `bytes=0-`，语义上就是整首，
+     * 所以它也能走流式 —— 否则"快"就只对不带 Range 的客户端生效了。
+     *
+     * 拖进度条时浏览器发 `bytes=N-`，此时若还在转码，就只能等它转完
+     * （最多几秒）。这是刻意的取舍：真正的随机访问需要完整文件，
+     * 而"先出声"和"能任意跳"在单文件流里无法同时满足。
+     */
+    const range = String(req.headers["range"] ?? "");
+    const wholeFile = range === "" || /^bytes=0-$/.test(range.trim());
+
+    if (!wholeFile || isCached(key)) {
+        try {
+            if (!isCached(key)) await transcodeToCache(track.path, key);
+        } catch (e) {
+            res.status(500).json({ error: (e as Error).message });
+            return;
         }
-    } catch (e) {
-        res.status(500).json({ error: (e as Error).message });
+        /*
+         * sendFile 自带 Range / ETag / 206，进度条 seek 靠的就是它。
+         * 显式给 Content-Type：静态推断对 .flac 不可靠。
+         */
+        res.type("audio/flac");
+        res.sendFile(cachePath(key), (err) => {
+            if (err && !res.headersSent) res.status(500).json({ error: String(err) });
+        });
         return;
     }
 
-    /*
-     * sendFile 自带 Range / ETag / 206，进度条 seek 靠的就是它。
-     * 显式给 Content-Type：静态推断对 .flac 不可靠。
-     */
+    /* ---- 首次播放：边转边发 ---- */
     res.type("audio/flac");
-    res.sendFile(cachePath(key), (err) => {
-        if (err && !res.headersSent) res.status(500).json({ error: String(err) });
+    /*
+     * 不设 Content-Length（转完才知道），也不声明 Accept-Ranges ——
+     * 声明了却给不出 206 会让浏览器在 seek 时行为不可预测。
+     */
+    let closed = false;
+    res.on("close", () => {
+        closed = true;
     });
+
+    try {
+        await transcodeStream(track.path, key, (chunk) => {
+            /* 客户端走了就只写缓存，不再往响应里塞（见 transcodeStream 的注释） */
+            if (!closed) res.write(chunk);
+        }, track.durationMs);
+        if (!closed) res.end();
+    } catch (e) {
+        if (!res.headersSent) res.status(500).json({ error: (e as Error).message });
+        else res.end();
+    }
 });
 
 app.post("/api/setup", (req: Request, res: Response) => {

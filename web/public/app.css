@@ -3030,21 +3030,12 @@ button.link {
     }
 }
 
-/* --- 榜单：跟随队列状态调整密度 --------------------------------------- */
+/* --- 榜单：格子尺寸 ------------------------------------------------ */
 /*
- * 队列为空时，榜单就是首屏主角 —— 用较大的格子（180px），一条能看 6 张。
- * 队列有任务时，下载才是主角，榜单降级为次要内容：格子收到 108px、
- * 每条多露几张，整体高度矮一半，不抢队列的位置。
+ * 榜单现在只在发现页出现，是首屏主角，所以固定用大格子（180px，一条能看 6 张）。
+ * 原先"有队列时收成 108px"的规则随工作台拆分一起删掉了 —— 那套自适应
+ * 是为"榜单和队列同屏"服务的，两者不再同屏后它只会是死代码。
  */
-.charts-compact .chart-strip {
-    grid-auto-columns: 108px;
-}
-
-.charts-compact .chart-row + .chart-row {
-    margin-top: var(--space-4);
-}
-
-/* 默认（队列为空）：格子更大，视觉上更像"浏览页" */
 .chart-strip {
     grid-auto-columns: 180px;
 }
@@ -3332,5 +3323,90 @@ body:has(.player:not([hidden])) {
 @media (hover: none) {
     .play-track {
         opacity: 1;
+    }
+}
+
+/* --- 发现页（首页）----------------------------------------------------- */
+/*
+ * 标题与搜索按钮同一行：搜索是次要动作，不该单独占一行高度。
+ * 用 space-between 把搜索推到右边，与顶栏的遥测胶囊在视觉上同一列。
+ */
+.discover-hero {
+    padding-bottom: 0;
+}
+
+.discover-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+}
+
+.discover-title {
+    margin: 0;
+    font-size: var(--text-2xl);
+    letter-spacing: -0.02em;
+}
+
+/* <details> 默认是块级、左侧有三角标记，这里全部清掉 */
+.search-fold {
+    flex: none;
+}
+
+.search-fold > summary {
+    list-style: none;
+    cursor: pointer;
+}
+
+.search-fold > summary::-webkit-details-marker {
+    display: none;
+}
+
+.search-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: var(--text-sm);
+    background: transparent;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.search-toggle:hover,
+.search-fold[open] .search-toggle {
+    color: var(--fg);
+    border-color: var(--accent);
+}
+
+.search-toggle svg {
+    width: 15px;
+    height: 15px;
+}
+
+/*
+ * 展开后的搜索条占满整行（flex-basis 100%），把标题挤到上一行 ——
+ * 这样输入框不会被压窄，而收起时标题仍然和按钮同一行。
+ */
+.search-fold-bar {
+    flex-basis: 100%;
+    margin-top: var(--space-3);
+}
+
+.discover-charts {
+    margin-top: var(--space-4);
+}
+
+@media (max-width: 640px) {
+    .discover-title {
+        font-size: var(--text-xl);
+    }
+
+    /* 窄屏把格子收小一点，一条能多露两张 */
+    .discover-charts .chart-strip {
+        grid-auto-columns: 140px;
     }
 }
