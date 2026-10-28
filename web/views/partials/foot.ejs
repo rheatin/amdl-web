@@ -5,11 +5,13 @@
     <a href="https://github.com/zhaarey/apple-music-downloader" target="_blank" rel="noreferrer">apple-music-dl</a>（ripper）·
     <a href="/healthz">healthz</a>
 </footer>
+<%- include("player") %>
 <div id="toast" class="toast"></div>
 <%# 环境光球：pointer-events:none + z-index:-1，只做背景氛围，不参与交互 %>
 <div class="ambient ambient-a" aria-hidden="true"></div>
 <div class="ambient ambient-b" aria-hidden="true"></div>
 <div class="ambient ambient-c" aria-hidden="true"></div>
 <script src="/static/app.js?v=<%= assetVersion %>"></script>
+<script src="/static/player.js?v=<%= assetVersion %>" defer></script>
 </body>
 </html>

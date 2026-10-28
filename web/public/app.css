@@ -1242,7 +1242,14 @@ a.q-chip:hover {
     color: #fff;
 }
 
-.album-tracks li > :first-child {
+/*
+ * 伸缩的是**曲名**，不是第一个子元素。
+ *
+ * 原来写的是 `li > :first-child`，在曲目行前加了播放按钮之后，
+ * "第一个子元素"变成了按钮 —— 于是按钮被 flex:1 拉满、曲名被挤到右边。
+ * 按类名指认才不会被插入顺序影响。
+ */
+.album-tracks li > .ellipsis {
     flex: 1;
     min-width: 0;
 }
@@ -3161,5 +3168,169 @@ button.link {
     .cfg-row {
         grid-template-columns: 1fr;
         gap: var(--space-1);
+    }
+}
+
+/* --- 播放条 ------------------------------------------------------------ */
+/*
+ * 固定底部 + 给 body 补 padding。
+ *
+ * 没有这一步，页面最下方的内容（页脚、最后一张卡片）会被播放条盖住。
+ * 用 :has 而不是 JS 加类：播放条显隐是 hidden 属性驱动的，
+ * CSS 能直接跟着它走，不用再维护一份状态。
+ */
+body:has(.player:not([hidden])) {
+    padding-bottom: 72px;
+}
+
+.player {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    /* 半透明 + 模糊：底下滚动的内容还能隐约看见，比纯色更轻 */
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    backdrop-filter: blur(12px);
+}
+
+.player[hidden] {
+    display: none;
+}
+
+.player-btn {
+    flex: none;
+    background: none;
+    border: 1px solid transparent;
+    color: var(--fg);
+    font-size: 15px;
+    line-height: 1;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.player-btn:hover {
+    background: var(--line-soft);
+}
+
+.player-play {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #04121b;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+}
+
+.player-play:hover {
+    background: var(--accent-hover, var(--accent));
+    filter: brightness(1.08);
+}
+
+.player-now {
+    flex: 0 1 220px;
+    min-width: 90px;
+    overflow: hidden;
+}
+
+.player-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+}
+
+.player-sub {
+    font-size: var(--text-xs);
+    color: var(--muted);
+}
+
+.player-seek {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 120px;
+}
+
+.player-time {
+    font-family: var(--mono);
+    font-size: var(--text-xs);
+    color: var(--muted);
+    min-width: 34px;
+    text-align: center;
+}
+
+/*
+ * 注意这里为什么要写成 `.player .player-volume` 而不是 `.player-volume`：
+ *
+ * 全局有一条 `input:not([type="radio"]), select, textarea { width: 100% }`，
+ * 它的选择器权重是 (0,1,1)，而单个类只有 (0,1,0) —— 于是音量条被撑成整行
+ * （实测 1248px，把进度条挤成 32px）。多加一层类把权重提到 (0,2,0) 才压得住。
+ *
+ * 同理给进度条显式 width:auto：它靠 flex:1 分配空间，不该继承那个 100%。
+ */
+.player-seek input[type="range"] {
+    flex: 1;
+    width: auto;
+    /* accent-color 让原生 range 直接跟随主题，省掉一整套伪元素样式 */
+    accent-color: var(--accent);
+    min-width: 0;
+}
+
+.player .player-volume {
+    flex: none;
+    width: 72px;
+    accent-color: var(--accent);
+}
+
+/* 窄屏：时间与音量让位给曲名和进度 */
+@media (max-width: 640px) {
+    .player {
+        gap: var(--space-1);
+        padding: var(--space-1) var(--space-2);
+    }
+
+    .player-volume,
+    #player-dur {
+        display: none;
+    }
+
+    .player-now {
+        flex-basis: 100px;
+    }
+}
+
+/* --- 库里的播放按钮 ---------------------------------------------------- */
+/*
+ * 默认低对比，悬停/聚焦才亮 —— 曲目列表是浏览用的，
+ * 满屏的播放按钮会把曲名挤走。触屏没有 hover，所以一直可见。
+ */
+.play-track {
+    flex: none;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 11px;
+    line-height: 1;
+    opacity: 0.5;
+}
+
+.album-tracks li:hover .play-track,
+.play-track:focus-visible {
+    opacity: 1;
+    color: var(--accent);
+}
+
+@media (hover: none) {
+    .play-track {
+        opacity: 1;
     }
 }

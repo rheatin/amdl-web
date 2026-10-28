@@ -97,9 +97,17 @@ const coverUrl = (tpl) => {
                     永远压不到卡片里的文字。
                 %>
                 <div class="album-panel">
-                    <ul class="album-tracks">
+                    <%#
+                      data-play-list 让"点第 3 首"能接着往下播：整张专辑作为一个队列。
+                      只送播放需要的四个字段 —— 把整个 Track 序列化会把 jobId/at/size
+                      这些界面不用、但会显著撑大 HTML 的东西也带上。
+                    %>
+                    <ul class="album-tracks"
+                        data-play-list="<%= JSON.stringify(g.tracks.map(function (t) { return { path: t.path, song: t.song, artist: t.artist, album: t.album }; })) %>">
                         <% g.tracks.forEach(function (t) { %>
                             <li>
+                                <button class="play-track" data-play-path="<%= t.path %>"
+                                        title="播放" aria-label="播放 <%= t.song %>">▶</button>
                                 <span class="ellipsis"><%= t.song %></span>
                                 <% if (t.durationMs) { %><span class="num"><%= Math.floor(t.durationMs / 60000) %>:<%= String(Math.floor((t.durationMs / 1000) % 60)).padStart(2, "0") %></span><% } %>
                             </li>

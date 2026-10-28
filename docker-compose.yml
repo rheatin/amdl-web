@@ -104,6 +104,8 @@ services:
       JOB_CONCURRENCY: ${JOB_CONCURRENCY:-1}
       JOB_TIMEOUT_SEC: ${JOB_TIMEOUT_SEC:-7200}
       JOB_LOG_LINES: ${JOB_LOG_LINES:-2000}
+      # 网页播放缓存上限（GB，见 .env.example）
+      PLAYCACHE_GB: ${PLAYCACHE_GB:-8}
       # 下载后文件权限（八进制；keep = 不改动引擎默认的 600）
       FILE_MODE: ${FILE_MODE:-666}
       # 与宿主目录属主保持一致（要同时改 compose 的 user:），仅用于自检提示

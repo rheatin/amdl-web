@@ -57,6 +57,7 @@ import {
     tryLoadEngineConfig,
     writeEngineConfig
 } from "./engineconf.js";
+import { cachePath, isCached, keyForPath, transcodeToCache } from "./playcache.js";
 import { sanitizeJobMeta, store } from "./store.js";
 import { normalizeRegion, parseAppleMusicUrl } from "./urlinfo.js";
 
@@ -691,6 +692,61 @@ app.get("/healthz", (_req: Request, res: Response) => {
         musicDir: config.musicDir,
         storefront: storefront(),
         engineConfig: tryLoadEngineConfig()?.file ?? null
+    });
+});
+
+/**
+ * 播放：把库里的 ALAC 换成 FLAC 后交给浏览器（带 Range，可拖动进度条）。
+ *
+ * ## 为什么是 FLAC 而不是原文件
+ *
+ * 引擎落盘的是 ALAC。实测 Chrome：`audio/mp4; codecs="alac"` → 不支持，
+ * `audio/flac` → 支持。ALAC 与 FLAC 都是无损，转换不损失任何信息，
+ * 只是换一种熵编码 —— 实测 5 分钟曲目 1.1 秒。
+ *
+ * ## 为什么不接受任意路径
+ *
+ * 客户端传的是 path，但服务端只在**当前音乐库清单**里找它。
+ * 不这样做就是任意文件读取：传 /etc/shadow 也能拿到。
+ */
+app.get("/api/play", requireAuth, async (req: Request, res: Response) => {
+    const wanted = String(req.query["path"] ?? "");
+    if (!wanted) {
+        res.status(400).json({ error: "缺少 path" });
+        return;
+    }
+    /* 只在库里的文件才能播 —— 这是唯一的授权边界 */
+    const track = store.allTracks().find((t) => t.path === wanted);
+    if (!track) {
+        res.status(404).json({ error: "不在音乐库中" });
+        return;
+    }
+    if (!fs.existsSync(track.path)) {
+        res.status(404).json({ error: "文件不存在（可能已被移动或删除）" });
+        return;
+    }
+
+    const key = keyForPath(track.path);
+    try {
+        if (!isCached(key)) {
+            /*
+             * 首次播放要转一次（约 1 秒）。期间客户端会等待 —— 所以先不发头，
+             * 让 fetch 自然等；转完再 sendFile。
+             */
+            await transcodeToCache(track.path, key);
+        }
+    } catch (e) {
+        res.status(500).json({ error: (e as Error).message });
+        return;
+    }
+
+    /*
+     * sendFile 自带 Range / ETag / 206，进度条 seek 靠的就是它。
+     * 显式给 Content-Type：静态推断对 .flac 不可靠。
+     */
+    res.type("audio/flac");
+    res.sendFile(cachePath(key), (err) => {
+        if (err && !res.headersSent) res.status(500).json({ error: String(err) });
     });
 });
 

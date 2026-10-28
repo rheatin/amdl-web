@@ -1,0 +1,36 @@
+<%#
+  常驻播放条 —— 每个页面都在（由 foot.ejs 引入）。
+
+  为什么单独一个 partial：底部条需要和 body 的 padding 配合，
+  而 padding 又必须跟着"有没有播放条"变化。集中在这里，
+  比在三个页面各写一遍可靠。
+
+  <audio> 不放 controls：自绘的条在跨页面导航时不会重置，
+  而且浏览器的原生控件样式在这里格不入。
+%>
+<div id="player" class="player" hidden>
+    <audio id="player-audio" preload="metadata"></audio>
+
+    <button class="player-btn" id="player-prev" title="上一首" aria-label="上一首">⏮</button>
+    <button class="player-btn player-play" id="player-toggle" title="播放 / 暂停" aria-label="播放或暂停">▶</button>
+    <button class="player-btn" id="player-next" title="下一首" aria-label="下一首">⏭</button>
+
+    <div class="player-now">
+        <div class="player-title ellipsis" id="player-title">未在播放</div>
+        <div class="player-sub ellipsis" id="player-sub"></div>
+    </div>
+
+    <div class="player-seek">
+        <span class="player-time" id="player-cur">0:00</span>
+        <%#
+          用 input[type=range] 而不是自绘 div：键盘可用、触摸拖动免费、
+          无障碍属性自带。自绘进度条这三样都得手写。
+        %>
+        <input type="range" id="player-progress" min="0" max="1000" value="0" step="1"
+               aria-label="播放进度">
+        <span class="player-time" id="player-dur">0:00</span>
+    </div>
+
+    <input type="range" id="player-volume" class="player-volume" min="0" max="1" step="0.01"
+           value="0.9" aria-label="音量" title="音量">
+</div>

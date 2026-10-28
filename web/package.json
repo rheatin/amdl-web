@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node test/workbench-no-reload.test.mjs && node test/search-client.test.mjs && node test/config-write.test.mjs && node test/charts-tabs.test.mjs && node test/progress.test.mjs && node test/cover.test.mjs && node test/result-card.test.mjs && node test/search-stream.test.mjs && node test/job-manage.test.mjs"
+    "test": "npm run build && node test/workbench-no-reload.test.mjs && node test/search-client.test.mjs && node test/config-write.test.mjs && node test/playback.test.mjs && node test/charts-tabs.test.mjs && node test/progress.test.mjs && node test/cover.test.mjs && node test/result-card.test.mjs && node test/search-stream.test.mjs && node test/job-manage.test.mjs"
   },
   "dependencies": {
     "ejs": "^3.1.10",

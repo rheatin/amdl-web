@@ -176,6 +176,8 @@ SSE 连接建立之前就已发出** —— 若 `hello` 只回放日志而不同
 | 改了挂载的 `config.yaml` 但容器里没变 | ① `sed -i` / `rename` 会换 inode，而 bind mount 锁定启动时的 inode；② 单文件 bind mount 不跟随路径替换 | 原地覆盖（`fs.writeFileSync` 同一路径），**不要** `sed -i`。网页写回走的就是这条路，因此无需重启 |
 | 网页写配置报 `EROFS` / `EACCES` | compose 里该文件挂载带 `:ro` | 去掉 `:ro`；容器用户（`user:`）需对该文件有写权限 |
 | 备份文件建不出来（`.bak` 报 `EACCES`） | `/engine` 目录属于 root，只把单文件挂了进去 | 备份写到 `/data`（可写卷），见 `writeEngineConfigTo` |
+| 浏览器放不了库里的 `.m4a` | 引擎落盘的是 **ALAC**；实测 Chrome `MSE audio/mp4; codecs="alac"` → false（Firefox 同样不支持，只有 Safari 系可以） | 播放时转成 **FLAC**（同为无损，仅换熵编码，实测 5 分钟曲目 1.1 秒），缓存到 `data/web/playcache/`。见 `src/playcache.ts` |
+| 播放条把进度条挤成一条线 | 全局有 `input:not([type="radio"]) { width: 100% }`（权重 0,1,1），单个类名（0,1,0）压不住 | 音量条写成 `.player .player-volume`（0,2,0），进度条显式 `width: auto` |
 | 网页提交 2FA 写不进 `data/wrapper/` | 上游 entrypoint 会 `chown -R root:root` 该目录 | 预置 `2fa.txt` 并 `chmod 666`（`chown` 不改模式位） |
 | rootless 启动器起不来 | 它需要在容器内挂载 procfs，部分内核不允许（`cap_add: SYS_ADMIN` 亦无效） | 使用 `privileged: true`（与上游 README 一致），或改用上游的 `wrapper-lite-qemu` |
 
