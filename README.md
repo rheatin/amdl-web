@@ -212,7 +212,7 @@ docker compose logs -f wrapper-lite
 
 | 路径 | 内容 |
 |---|---|
-| `/` | **发现**：热门榜单为主，搜索收在一个可展开的按钮里 |
+| `/` | **发现**：「为你推荐」（按账号个性化，Apple 每日刷新）+ 热门榜单；搜索收在可展开的按钮里 |
 | `/jobs` | **任务**：输入链接/关键词 → 排队 → 进度 → 检视器 |
 | `/search?q=` | 搜索结果（带分类页签） |
 | `/library` | 音乐库（按专辑分组，每首可播放） |
@@ -220,6 +220,18 @@ docker compose logs -f wrapper-lite
 
 > 首页与任务页是分开的：队列一长会把榜单挤到折叠线以下，而没有任务时首屏又空着 ——
 > 两种状态各占半屏，谁都不好。拆开之后各自都能占满。
+
+### 「为你推荐」需要 `media-user-token`
+
+发现页顶部那 12 个货架（专属推荐歌单 / 最近播放 / 专属电台推荐 / 最新发行…）来自
+`/v1/me/recommendations`，**按账号个性化、每天刷新**（每个货架带 `nextUpdateDate`）。
+它需要 `config.yaml` 里的 `media-user-token`；没配时这一块整块不出现，页面只剩榜单。
+
+两个 token 缺一不可，且**开发者 token 必须是现抓的**：实测用 `config.yaml` 里的
+`authorization-token` 配 `media-user-token` 会 401，必须用从 music.apple.com
+bundle 抓到的那个（`src/ampmusic.ts` 的 `tokenCandidates`）。
+
+电台货架（`stations`）没有站内页面，卡片直接外链到 Apple Music。
 
 ## 🧱 构建相关改动（相对上游）
 

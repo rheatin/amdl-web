@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 import {
     capabilityFor,
     fetchCharts,
+    hasUserToken,
     itemDetail,
+    personalShelves,
     type ItemDetail,
     searchCatalog,
     ALL_CODECS,
@@ -42,6 +44,7 @@ import {
     seedAdmin,
     verifyPassword
 } from "./auth.js";
+import { artworkAt } from "./artwork.js";
 import { clearLocaleCache, config, language, storefront } from "./config.js";
 import { explicitJobOptions } from "./jobopts.js";
 import { cancelJob, enqueue, isActive, queueDepth, reconcileOnBoot, subscribe } from "./queue.js";
@@ -254,9 +257,7 @@ async function attachFormats(cap: TrackCapability, storefrontOverride?: string):
  * 而 <img> 加载失败**不报任何错**，界面上只是少了张图。
  * 这条正则**必须与 ampmusic.artworkAt 完全一致** —— 有单测逐字比对两者输出。
  */
-const ART_TEMPLATE_RE = /\{w\}.*?(?=\?|$)/;
-const art = (tpl: string, size: number): string =>
-    tpl && tpl.includes("{w}") ? tpl.replace(ART_TEMPLATE_RE, `${size}x${size}bb.jpg`) : tpl || "";
+const art = (tpl: string, size: number): string => artworkAt(tpl, size);
 
 /*
  * 挂到 app 级 locals，让**所有视图**都能拿到。
@@ -844,6 +845,42 @@ app.get("/api/charts", requireAuth, async (_req: Request, res: Response) => {
         res.json({
             sections: [],
             note: `榜单暂时取不到（${err instanceof Error ? err.message : String(err)}）`
+        });
+    }
+});
+
+/**
+ * 发现页的个性化货架（「为你推荐」）。
+ *
+ * 与 /api/charts 的分工：
+ *   · 榜单 = 编辑维护，所有人一样，好几天才动一次
+ *   · 这里 = 按账号个性化，Apple **每天**刷新（响应里带 nextUpdateDate）
+ *
+ * 需要 config.yaml 的 media-user-token。没有它时返回空数组 + 一个说明，
+ * 界面据此只显示榜单 —— 而不是让首页报错或空着。
+ */
+app.get("/api/discover", requireAuth, async (_req: Request, res: Response) => {
+    if (!hasUserToken()) {
+        res.json({
+            shelves: [],
+            reason: "config.yaml 里没有 media-user-token，无法获取个性化推荐",
+            hasUserToken: false
+        });
+        return;
+    }
+    try {
+        const shelves = await personalShelves(12);
+        res.json({
+            shelves,
+            hasUserToken: true,
+            /* 全部货架共享同一个刷新时间，取第一个即可 */
+            nextUpdate: shelves.find((s) => s.nextUpdate)?.nextUpdate ?? null
+        });
+    } catch (err) {
+        res.json({
+            shelves: [],
+            hasUserToken: true,
+            note: `推荐暂时取不到（${err instanceof Error ? err.message : String(err)}）`
         });
     }
 });

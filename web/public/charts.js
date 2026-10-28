@@ -9,37 +9,6 @@
  * 那会让用户以为站点坏了，而实际只是 Apple 的接口抽风。
  */
 
-/*
- * 封面模板展开 —— 这是**第三份**实现（另两份：ampmusic.ts 的后端版、
- * index.ts 里给 EJS 视图用的 app.locals.art）。
- *
- * 分三份是因为三者跑在互相隔离的环境里（Node 服务端 / EJS 渲染 / 浏览器），
- * 没法共享同一个模块。代价是规则必须手抄，所以 charts-tabs.test.mjs
- * 有一条断言逐字比对三份实现的输出 —— 抄漏一处，封面就是静默的空图。
- *
- * 形状实测五种：`{f}` / `bb.jpg` / `.jpg` / `SC.DN01.jpg`（播放列表）/ `mv.jpg`（MV）。
- * 只认 bb/dd/cc 会拼出 `…/200x200bb.jpgSC.DN01.jpg`，mzstatic 返回 400，
- * 而 <img> 加载失败不产生任何控制台错误。
- */
-const WbArt = (function () {
-    const RE = /\{w\}.*?(?=\?|$)/;
-    return (tpl, size) => (tpl && tpl.includes("{w}") ? tpl.replace(RE, `${size}x${size}bb.jpg`) : tpl || "");
-})();
-
-
-/**
- * 转义来自 Apple 的文本再拼进 HTML。
- *
- * 这些字符串（歌名/艺人/榜单名）是**外部输入**，直接拼 innerHTML 等于把
- * XSS 面交给 Apple 的目录内容。虽然我们相信 Apple，但目录里确实存在
- * 用户可提交的曲名（例如 \"<script>\" 之类），而这条链路经手的是我们自己的页面。
- */
-const escHtml = (s) =>
-    String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-
-/** 属性值同样要转义 —— 单引号包裹时 & 和 ' 最关键。 */
-const escAttr = (s) => escHtml(s);
-
 (async () => {
     const wrap = document.getElementById("charts");
     const body = document.getElementById("charts-body");

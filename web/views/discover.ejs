@@ -38,6 +38,25 @@
 </section>
 
 <%#
+  「为你推荐」——按账号个性化，Apple 每天刷新。
+
+  放在榜单**之前**：它是"今天有什么"的答案，而榜单是"大家都听什么"，
+  后者几天才动一次，长期看几乎不变。
+
+  初始 hidden：没有 media-user-token 或取不到时，整块不出现，
+  首页就只剩榜单（而不是空一大块）。
+%>
+<section class="card discover-shelves" id="shelves"
+         data-region="<%= telemetry ? telemetry.storefront : "" %>" hidden>
+    <div class="head-row">
+        <h2 class="card-title">为你推荐</h2>
+        <span class="label" id="shelves-state"></span>
+    </div>
+    <p class="muted small" id="shelves-note" hidden></p>
+    <div id="shelves-body"></div>
+</section>
+
+<%#
   榜单容器。data-region 供卡片拼详情页链接：榜单是按这个商店取的，
   跳转时要带上，否则点进专辑会落到别的区的记录上。
 
@@ -52,6 +71,12 @@
     <div id="charts-body"></div>
 </section>
 
+<%#
+  catalog-ui.js 提供 escHtml/escAttr/WbArt —— 发现页与榜单共用同一份实现。
+  顺序重要：共享工具必须排在两个渲染脚本之前（defer 保证按文档顺序执行）。
+%>
+<script src="/static/catalog-ui.js?v=<%= assetVersion %>" defer></script>
+<script src="/static/discover.js?v=<%= assetVersion %>" defer></script>
 <script src="/static/charts.js?v=<%= assetVersion %>" defer></script>
 
 <script>

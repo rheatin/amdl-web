@@ -14,6 +14,8 @@
 import { config, language, storefront } from "./config.js";
 import { mapLimit } from "./concurrency.js";
 import { mergeFormats, parseMasterPlaylist, type AudioFormat } from "./format.js";
+import { SECRET_KEYS, tryLoadEngineConfig } from "./engineconf.js";
+import { artworkAt } from "./artwork.js";
 
 const UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -143,6 +145,8 @@ type RawAttrs = {
     audioTraits?: string[];
     /** 目录给的增强 HLS 清单地址 —— 音质明细的首选取数来源（见 formatsFromCatalog）。 */
     extendedAssetUrls?: { enhancedHls?: string };
+    /** 歌单/电台的「策划方」（Apple Music、Apple Music 国语流行…）。歌曲没有这个字段。 */
+    curatorName?: string;
     /* --- 详情页要用的字段（目录会在 tracks 与记录上给，但类型里之前没声明） --- */
     discNumber?: number;
     trackNumber?: number;
@@ -182,17 +186,7 @@ function enhancedHlsOf(item: { attributes?: RawAttrs } | undefined): string | un
  * 所以做法是：从 `{w}` 开始**吃掉到查询串之前的整段尾巴**，再换上我们自己的规格。
  * 保留 `?l=` 这类查询参数（它是本地化参数，与尺寸无关）。
  */
-export function artworkAt(template: string, size: number, format: "jpg" | "webp" = "jpg"): string {
-    if (!template) return "";
-    if (!template.includes("{w}")) return template;
-    /*
-     * `\{w\}.*?` 里的 `*?` 是懒匹配，配合后面的 `(?=\?|$)` 锚点：
-     *   · 有查询串时，停在 `?` 之前（保留 ?l= 之类）
-     *   · 没有查询串时，吃到字符串末尾
-     * 这样 `{f}` / `bb.jpg` / `SC.DN01.jpg` / `mv.jpg` / `.jpg` 全都能吃掉。
-     */
-    return template.replace(/\{w\}.*?(?=\?|$)/, `${size}x${size}bb.${format}`);
-}
+export { artworkAt } from "./artwork.js";
 
 export async function searchCatalog(
     term: string,
@@ -826,4 +820,129 @@ export async function musicVideoInfo(adamId: string, storefront?: string): Promi
         artwork: a.artwork?.url ?? "",
         url: a.url ?? ""
     };
+}
+
+/* ------------------------------------------------------- 个性化（发现页） */
+
+/**
+ * 「发现」的货架。
+ *
+ * ## 与榜单的区别
+ *
+ * 榜单（`/v1/catalog/{sf}/charts`）用公开开发者 token 就能取，但它是**编辑维护的**，
+ * 好几天才动一次 —— 页面上看起来就是"永远不变"。
+ *
+ * 这里走 `/v1/me/recommendations`：**按账号个性化**，返回 12 个货架
+ * （专属推荐歌单 / 最近播放 / 专属电台推荐 / 最新发行 / 按风格分组的推荐…），
+ * 每个货架都带 `nextUpdateDate`，Apple 每天刷新。
+ *
+ * ## 认证：两个 token 缺一不可
+ *
+ *   authorization: Bearer <网页抓的开发者 token>
+ *   Music-User-Token: <config.yaml 的 media-user-token>
+ *
+ * 实测（2026-10-28）：只带 media-user-token 而用 config.yaml 里的
+ * `authorization-token` 会 401；必须用从 music.apple.com bundle 现抓的那个。
+ * 反过来，没有 media-user-token 时 `/v1/me/*` 一律 401 —— 所以它是硬门槛。
+ */
+export type Shelf = {
+    /** 货架标题，如「专属推荐歌单」「最近播放」 */
+    title: string;
+    /** Apple 的展示形态（MusicNotesHeroShelf / MusicCoverShelf），决定卡片大小 */
+    kind: string;
+    /** 下次刷新时间（ISO）。没有就为空 */
+    nextUpdate?: string;
+    items: SearchItem[];
+};
+
+/** 从引擎配置里读 media-user-token（新旧两套键都认）。 */
+function musicUserToken(): string {
+    const v = tryLoadEngineConfig()?.values ?? {};
+    for (const key of SECRET_KEYS) {
+        const t = (v[key] ?? "").trim();
+        if (t) return t;
+    }
+    return "";
+}
+
+/** 当前账号是否可用于个性化内容（界面据此决定是否显示「为你推荐」）。 */
+export function hasUserToken(): boolean {
+    return musicUserToken() !== "";
+}
+
+/**
+ * 取个性化货架。
+ *
+ * 返回空数组表示"拿不到"（没有 token / token 失效 / Apple 抽风），
+ * 而不是抛错 —— 首页不该因为个性化取不到就整块报错，
+ * 榜单仍然可以照常显示。
+ */
+export async function personalShelves(limit = 12): Promise<Shelf[]> {
+    const mut = musicUserToken();
+    if (!mut) return [];
+
+    const url = new URL("https://amp-api.music.apple.com/v1/me/recommendations");
+    url.searchParams.set("l", language());
+    url.searchParams.set("limit", String(limit));
+
+    const list = await tokenCandidates();
+    const ordered = cached ? [cached.token, ...list.filter((t) => t !== cached!.token)] : list;
+
+    for (const token of ordered) {
+        const res = await fetch(url, {
+            headers: {
+                authorization: `Bearer ${token}`,
+                "music-user-token": mut,
+                origin: "https://music.apple.com",
+                "user-agent": UA,
+                accept: "application/json"
+            }
+        });
+        if (res.status === 401 || res.status === 403) continue;
+        if (!res.ok) return [];
+
+        const body = (await res.json()) as {
+            data?: Array<{
+                type?: string;
+                attributes?: { title?: { stringForDisplay?: string }; display?: { kind?: string }; nextUpdateDate?: string };
+                relationships?: { contents?: { data?: RawItem[] } };
+            }>;
+        };
+
+        const out: Shelf[] = [];
+        for (const rec of body.data ?? []) {
+            const a = rec.attributes ?? {};
+            const contents = rec.relationships?.contents?.data ?? [];
+            const items: SearchItem[] = contents
+                .map((item) => {
+                    const ia = item.attributes ?? {};
+                    return {
+                        id: item.id ?? "",
+                        /* 与搜索/榜单一致：目录给复数，这里归一到单数 */
+                        type: (item.type ?? "").replace(/s$/, ""),
+                        name: ia.name ?? "(untitled)",
+                        /* 歌单没有 artistName，用 curatorName（Apple Music / 某风格） */
+                        artistName: ia.artistName ?? ia.curatorName ?? "",
+                        albumName: ia.albumName ?? "",
+                        artwork: ia.artwork?.url ?? "",
+                        url: ia.url ?? "",
+                        trackCount: ia.trackCount,
+                        releaseDate: ia.releaseDate,
+                        durationMs: ia.durationInMillis
+                    };
+                })
+                /* 空 id 的条目点了也没用，直接丢掉 */
+                .filter((i) => i.id !== "");
+
+            if (items.length === 0) continue;
+            out.push({
+                title: a.title?.stringForDisplay ?? "推荐",
+                kind: a.display?.kind ?? "",
+                nextUpdate: a.nextUpdateDate,
+                items
+            });
+        }
+        return out;
+    }
+    return [];
 }

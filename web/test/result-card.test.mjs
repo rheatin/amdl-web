@@ -106,8 +106,22 @@ const TEMPLATE_SHAPES = [
 ];
 for (const tpl of TEMPLATE_SHAPES) {
     const out = (await render({ ...nasty, artwork: tpl })).match(/<img src="([^"]+)"/)[1];
-    // 允许后跟查询串：播放列表的模板带 `?l=`（目录语言参数），必须保留
-    check(`模板可展开且无残留占位符（${tpl.slice(-14)}）`, /200x200bb\.jpg(\?|$)/.test(out) && !out.includes("{"));
+    /*
+     * 断言的是"占位符被换掉了、尺寸对了、裁切串没被吃坏"，而不是固定等于 bb.jpg。
+     *
+     * 早先这里写死 `/200x200bb\.jpg/`，那是把**旧算法**（吃掉整段尾巴换成 bb.jpg）
+     * 当成了规格。但个性化歌单的封面在 /gen/ 下（形如 `{w}x{h}AM.PDCXS19.jpg`
+     * 且带 signature 参数），换成 bb.jpg 会 404 —— 所以算法改成"只替换占位符、
+     * 尾巴原样保留"。写死 bb.jpg 的断言会把这个修复判成回归。
+     */
+    check(
+        `模板可展开且无残留占位符（${tpl.slice(-14)}）`,
+        out.includes("/200x200") && !out.includes("{")
+    );
+    /* 查询串必须保留：播放列表模板带 ?l=（目录语言参数） */
+    if (tpl.includes("?")) {
+        check(`查询串保留（${tpl.slice(-14)}）`, out.includes("?"), out);
+    }
 }
 
 /*

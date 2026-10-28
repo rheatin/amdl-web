@@ -3388,12 +3388,43 @@ body:has(.player:not([hidden])) {
 }
 
 /*
- * 展开后的搜索条占满整行（flex-basis 100%），把标题挤到上一行 ——
- * 这样输入框不会被压窄，而收起时标题仍然和按钮同一行。
+ * 展开时整个 details 要占满一行。
+ *
+ * 只给 .search-fold-bar 设 flex-basis:100% 是不够的 —— 它是 details 的子元素，
+ * 不是 flex 项，那条规则什么也不会做。details 自己是 .discover-head 的 flex 项，
+ * 且 flex:none（按内容定宽），于是展开后整条只有"选择器+按钮"那么宽，
+ * 输入框（无固有宽度）被压成 0。必须让 details 本身变成 flex:1。
  */
+.search-fold[open] {
+    flex: 1 1 100%;
+    /*
+     * 展开后 details 占满整行，但 <summary>（那个"搜索"按钮）是它的第一个子元素，
+     * 默认会跑到最左边、和标题错位。改成纵向 flex + 右对齐，
+     * 让按钮始终待在右上角，视觉上不跳。
+     */
+    display: flex;
+    flex-direction: column;
+}
+
+.search-fold[open] > .search-toggle {
+    align-self: flex-end;
+}
+
 .search-fold-bar {
-    flex-basis: 100%;
     margin-top: var(--space-3);
+}
+
+/*
+ * 地区选择器要按内容定宽。
+ *
+ * 全局有一条 `select { width: 100% }`（表单控件统一铺满），在这里会把
+ * 整个搜索行让给下拉框 —— 截图里输入框几乎不可见就是这个原因。
+ * 这条的选择器权重 (0,1,1) 压得住全局的 (0,0,1)。
+ */
+.search-fold-bar select {
+    width: auto;
+    flex: none;
+    min-width: 140px;
 }
 
 .discover-charts {
@@ -3409,4 +3440,41 @@ body:has(.player:not([hidden])) {
     .discover-charts .chart-strip {
         grid-auto-columns: 140px;
     }
+}
+
+/* --- 发现页：为你推荐 -------------------------------------------------- */
+/*
+ * 货架之间留白比榜单大一点：这里是"今天的新东西"，视觉上该有段落感；
+ * 榜单是长列表，行距小反而更好扫。
+ */
+.discover-shelves {
+    margin-top: var(--space-4);
+}
+
+.discover-shelves .chart-row + .chart-row {
+    margin-top: var(--space-5);
+}
+
+/* 「每日更新 · 下次 …」这类说明：不要抢标题的注意力 */
+#shelves-state {
+    font-family: var(--mono);
+    font-size: var(--text-xs);
+    color: var(--muted);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+}
+
+#shelves-state::before {
+    display: none;
+}
+
+/* 卡片整体可点：外链（电台）与站内详情页共用同一套外观 */
+a.chart-card {
+    color: inherit;
+    text-decoration: none;
+}
+
+a.chart-card:hover .chart-title {
+    color: var(--accent);
 }

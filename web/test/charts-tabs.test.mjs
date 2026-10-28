@@ -14,11 +14,15 @@ import fs from "node:fs";
  * 跑浏览器成本高得多、还依赖网络。
  */
 /*
- * 榜单代码从 workbench.js 拆到了 charts.js（首页与任务页不再同屏）。
- * 两条字符串契约横跨两个文件，所以拼起来一起断言 —— 拆文件不该让测试变松。
+ * 榜单/发现页的代码分散在三个文件里：
+ *   catalog-ui.js  共享的转义与封面工具（两个渲染脚本都用它）
+ *   charts.js      榜单
+ *   discover.js    个性化货架
+ * 字符串契约横跨它们，所以拼起来一起断言 —— 拆文件不该让测试变松。
  */
-const ui = fs.readFileSync(new URL("../public/workbench.js", import.meta.url), "utf8") +
-    fs.readFileSync(new URL("../public/charts.js", import.meta.url), "utf8");
+const ui = ["workbench.js", "catalog-ui.js", "charts.js", "discover.js"]
+    .map((f) => fs.readFileSync(new URL("../public/" + f, import.meta.url), "utf8"))
+    .join("\n");
 const searchJs = fs.readFileSync(new URL("../public/search.js", import.meta.url), "utf8");
 const resultsTpl = fs.readFileSync(new URL("../views/partials/results-section.ejs", import.meta.url), "utf8");
 const rowTpl = fs.readFileSync(new URL("../views/partials/result-item.ejs", import.meta.url), "utf8");
@@ -112,23 +116,19 @@ check(
 );
 
 
-/* ---- 5. 三份 artwork 实现必须给出相同结果 ---- */
+/* ---- 5. artwork 实现：服务端唯一，浏览器一份必须与之一致 ---- */
 /*
- * 同一条规则被抄了三遍（后端 artworkAt / 视图 app.locals.art / 前端 WbArt），
- * 因为三者跑在互相隔离的环境里。漂移的表现是「某处封面变空图 + 零报错」——
- * 已经在播放列表/MV 上真实发生过：后端改了、前端没改。
- * 所以这里拿同一批模板跑三份实现，逐字比对。
+ * 服务端已合成为 src/artwork.ts（EJS 视图与目录查询共用）。浏览器拿不到 Node 模块，
+ * 所以 public/catalog-ui.js 里还有一份手抄 —— 漂移的表现是「某处封面变空图 + 零报错」，
+ * 已经在播放列表/MV 上真实发生过。
+ *
+ * 这里不再用正则"重建"实现，而是**直接调用真实函数**比对：
+ * 重建只能验证正则字面量相同，验证不了替换逻辑（改坏替换模板它照样通过）。
  */
-const { artworkAt } = await import("../dist/ampmusic.js");
+const { artworkAt } = await import("../dist/artwork.js");
 
-const wbReSrc = (ui.match(/const WbArt = \(function \(\) \{[\s\S]*?const RE = (\/.*?\/);/) || [])[1];
-const wbRe = wbReSrc ? (0, eval)(wbReSrc) : null;
-const wbArt = (tpl, size) => (tpl && tpl.includes("{w}") ? tpl.replace(wbRe, `${size}x${size}bb.jpg`) : tpl || "");
-
-const idxSrc = fs.readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
-const viewReSrc = (idxSrc.match(/const ART_TEMPLATE_RE = (\/.*?\/);/) || [])[1];
-const viewRe = viewReSrc ? (0, eval)(viewReSrc) : null;
-const viewArt = (tpl, size) => (tpl && tpl.includes("{w}") ? tpl.replace(viewRe, `${size}x${size}bb.jpg`) : tpl || "");
+const uiSrc = fs.readFileSync(new URL("../public/catalog-ui.js", import.meta.url), "utf8");
+const wbArt = new Function(`${uiSrc}\nreturn WbArt;`)();
 
 const PARITY_SHAPES = [
     "https://x/a.rgb.jpg/{w}x{h}{f}",
@@ -136,15 +136,23 @@ const PARITY_SHAPES = [
     "https://x/c.jpg/{w}x{h}.jpg",
     "https://x/d.png/{w}x{h}SC.DN01.jpg?l=zh-Hans",
     "https://x/e.sca1.jpg/{w}x{h}mv.jpg",
-    "https://x/f.jpg/{w}x{h}"
+    "https://x/f.jpg/{w}x{h}",
+    /* 个性化歌单的封面在 /gen/ 下，带签名参数 —— 早先的"吃掉整段尾巴"对它 404 */
+    "https://x/gen/{w}x{h}AM.PDCXS19.jpg?signature=abc&vkey=1"
 ];
-check("三份 artwork 实现的正则都存在", Boolean(wbRe && viewRe));
+
 for (const tpl of PARITY_SHAPES) {
     const a = artworkAt(tpl, 200);
-    const b = viewArt(tpl, 200);
-    const c = wbArt(tpl, 200);
-    check(`三份实现一致（${tpl.slice(-16)}）`, a === b && b === c, `后端 ${a} / 视图 ${b} / 前端 ${c}`);
+    const b = wbArt(tpl, 200);
+    check(`两份实现一致（${tpl.slice(-18)}）`, a === b, `服务端 ${a} / 浏览器 ${b}`);
 }
+
+check(
+    "gen/ 模板只换占位符，不吃掉裁切串",
+    artworkAt("https://x/gen/{w}x{h}AM.PDCXS19.jpg?vkey=1", 200) ===
+        "https://x/gen/200x200AM.PDCXS19.jpg?vkey=1",
+    "换成 bb.jpg 会 404"
+);
 
 console.log(failures === 0 ? "\n全部通过" : `\n${failures} 项失败`);
 process.exit(failures === 0 ? 0 : 1);
