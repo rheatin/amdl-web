@@ -31,6 +31,13 @@ let queue = [];
 let index = -1;
 /** 正在拖动进度条时不要被 timeupdate 抢回去 */
 let seeking = false;
+/** 发起当前播放的那个按钮 —— 用来标 .playing（同时只可能有一个在响） */
+let originBtn = null;
+
+function markOrigin(playing) {
+    if (!originBtn) return;
+    originBtn.classList.toggle("playing", playing);
+}
 /** 已经预取过的 path，避免重复请求 */
 const prefetched = new Set();
 
@@ -45,6 +52,20 @@ function playUrl(path) {
     return `/api/play?path=${encodeURIComponent(path)}`;
 }
 
+/**
+ * 队列条目的实际音源。
+ *
+ * 两种：
+ *   · 库内文件 → /api/play（服务端把 ALAC 转成浏览器能放的 FLAC）
+ *   · 试听片段 → 目录给的 CDN 地址，**原样直连**
+ *
+ * 试听不需要服务端参与：Apple 的 previews 是不加密的普通 MP4，
+ * 而 <audio> 取跨源媒体不受 CORS 限制，所以一点流量都不过 NAS。
+ */
+function srcOf(item) {
+    return item.preview ? item.url : playUrl(item.path);
+}
+
 function show() {
     if (bar) bar.hidden = false;
 }
@@ -56,8 +77,13 @@ function load(list, at) {
     if (!t) return;
     show();
     elTitle.textContent = t.song || "未知曲目";
-    elSub.textContent = [t.artist, t.album].filter(Boolean).join(" · ");
-    audio.src = playUrl(t.path);
+    /*
+     * 明确标「试听」：片段只有 30 秒，不写清楚用户会以为歌坏了 / 网站卡了。
+     */
+    elSub.textContent = t.preview
+        ? [t.artist, "试听 30 秒"].filter(Boolean).join(" · ")
+        : [t.artist, t.album].filter(Boolean).join(" · ");
+    audio.src = srcOf(t);
     audio.play().catch((e) => {
         /* 自动播放被拦：这是浏览器策略，不是错误。让用户点一下播放键即可。 */
         if (e.name !== "NotAllowedError") console.warn("播放失败", e);
@@ -87,7 +113,8 @@ function prev() {
  */
 function prefetchNext() {
     const t = queue[index + 1];
-    if (!t || prefetched.has(t.path)) return;
+    /* 试听是 CDN 直连、没有转码成本，预取它只会浪费带宽 */
+    if (!t || t.preview || prefetched.has(t.path)) return;
     prefetched.add(t.path);
     fetch(playUrl(t.path), { headers: { range: "bytes=0-1" } })
         .then((r) => r.arrayBuffer())
@@ -111,11 +138,15 @@ if (audio && bar) {
     audio.addEventListener("play", () => {
         elToggle.textContent = "⏸";
         bar.classList.add("playing");
+        markOrigin(true);
     });
     audio.addEventListener("pause", () => {
         elToggle.textContent = "▶";
         bar.classList.remove("playing");
+        markOrigin(false);
     });
+    audio.addEventListener("ended", () => markOrigin(false));
+    audio.addEventListener("error", () => markOrigin(false));
 
     audio.addEventListener("loadedmetadata", () => {
         elDur.textContent = fmt(audio.duration);
@@ -128,10 +159,18 @@ if (audio && bar) {
     });
 
     audio.addEventListener("ended", () => {
-        if (index + 1 < queue.length) load(queue, index + 1);
-        else {
-            elToggle.textContent = "▶";
+        /*
+         * 试听放完就停：它是一首 30 秒的**片段**，接着自动播下一首的片段
+         * 会变成"永远听不完任何东西"，比手动点更烦。
+         */
+        const cur = queue[index];
+        if (!cur || !cur.preview) {
+            if (index + 1 < queue.length) {
+                load(queue, index + 1);
+                return;
+            }
         }
+        elToggle.textContent = "▶";
     });
 
     audio.addEventListener("playing", prefetchNext);
@@ -176,19 +215,44 @@ if (audio && bar) {
 }
 
 /*
- * 播放委托：任何带 data-play-path 的元素都能触发。
+ * 播放委托：带 data-play-path（库内文件）或 data-play-preview（30 秒片段）的元素都能触发。
  *
- * 卡片是流式插入的（搜索结果、榜单），所以用委托而不是逐个绑定。
+ * 卡片是流式插入的（搜索结果、榜单、推荐货架），所以用委托而不是逐个绑定。
  * 若同一个容器上有 data-play-list（JSON 数组），就把它当整个队列 ——
  * 这样点专辑里的某一首，下一首会自然往下走。
+ *
+ * 注意委托必须排在 app.js 的"卡片→详情页"委托**之后**注册吗？不需要：
+ * 这里 stopPropagation + preventDefault 会挡住冒泡，而 app.js 那条对
+ * `button` 本来就 return（t.closest("button, a, .why")）。
  */
 document.addEventListener("click", (ev) => {
     const t = ev.target instanceof Element ? ev.target : null;
     if (!t) return;
-    const btn = t.closest("[data-play-path]");
+    const btn = t.closest("[data-play-path], [data-play-preview]");
     if (!btn) return;
+
+    const previewUrl = btn.getAttribute("data-play-preview");
+    if (previewUrl) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (originBtn && originBtn !== btn) originBtn.classList.remove("playing");
+        originBtn = btn;
+        load(
+            [{
+                preview: true,
+                url: previewUrl,
+                song: btn.getAttribute("data-play-name") || "",
+                artist: btn.getAttribute("data-play-artist") || ""
+            }],
+            0
+        );
+        return;
+    }
+
     ev.preventDefault();
     ev.stopPropagation();
+    if (originBtn && originBtn !== btn) originBtn.classList.remove("playing");
+    originBtn = btn;
 
     const listEl = btn.closest("[data-play-list]");
     if (listEl) {

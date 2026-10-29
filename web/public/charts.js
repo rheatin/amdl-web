@@ -43,7 +43,7 @@
                                         <span class="dl-spec">${it.trackCount ? it.trackCount + " 首" : ""}</span>
                                     </button>
                                 </div></div>` : ""}
-                            </div>
+                            ${previewBtn(it)}</div>
                             <div class="chart-meta">
                                 <div class="chart-title ellipsis" title="${escAttr(it.name)}">${escHtml(it.name)}</div>
                                 <div class="chart-sub ellipsis">${escHtml(it.artistName)}</div>

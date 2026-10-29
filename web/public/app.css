@@ -3328,8 +3328,7 @@ body:has(.player:not([hidden])) {
 
 /* --- 发现页（首页）----------------------------------------------------- */
 /*
- * 标题与搜索按钮同一行：搜索是次要动作，不该单独占一行高度。
- * 用 space-between 把搜索推到右边，与顶栏的遥测胶囊在视觉上同一列。
+ * 标题与搜索胶囊同一行：搜索是次要动作，不该单独占一行高度。
  */
 .discover-hero {
     padding-bottom: 0;
@@ -3339,8 +3338,7 @@ body:has(.player:not([hidden])) {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-4);
-    flex-wrap: wrap;
+    gap: var(--space-3);
 }
 
 .discover-title {
@@ -3349,11 +3347,12 @@ body:has(.player:not([hidden])) {
     letter-spacing: -0.02em;
 }
 
-/* <details> 默认是块级、左侧有三角标记，这里全部清掉 */
 .search-fold {
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
 }
 
+/* <details> 默认是块级、左侧有三角标记，这里全部清掉 */
 .search-fold > summary {
     list-style: none;
     cursor: pointer;
@@ -3363,6 +3362,7 @@ body:has(.player:not([hidden])) {
     display: none;
 }
 
+/* 收起态：一个带文字的胶囊，就是"搜索"按钮本身 */
 .search-toggle {
     display: inline-flex;
     align-items: center;
@@ -3385,50 +3385,139 @@ body:has(.player:not([hidden])) {
 .search-toggle svg {
     width: 15px;
     height: 15px;
+    flex: none;
 }
 
 /*
- * 展开时整个 details 要占满一行。
+ * 展开态：details 自己变成一行 —— [放大镜][输入框][搜索]。
  *
- * 只给 .search-fold-bar 设 flex-basis:100% 是不够的 —— 它是 details 的子元素，
- * 不是 flex 项，那条规则什么也不会做。details 自己是 .discover-head 的 flex 项，
- * 且 flex:none（按内容定宽），于是展开后整条只有"选择器+按钮"那么宽，
- * 输入框（无固有宽度）被压成 0。必须让 details 本身变成 flex:1。
+ * 关键点是那个胶囊**不消失也不重复**：它本来就是这一行的放大镜图标。
+ * 收起时带"搜索"文字（当按钮用），展开后只留图标、挪到输入框最前面。
+ *
+ * 之前的写法是胶囊和提交按钮同时显示，两个都叫"搜索"，同义反复；
+ * 而胶囊靠 align-self 悬在右边，和下面的输入框分属两行，看着就是散的。
  */
 .search-fold[open] {
-    flex: 1 1 100%;
-    /*
-     * 展开后 details 占满整行，但 <summary>（那个"搜索"按钮）是它的第一个子元素，
-     * 默认会跑到最左边、和标题错位。改成纵向 flex + 右对齐，
-     * 让按钮始终待在右上角，视觉上不跳。
-     */
     display: flex;
-    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+    flex: 1 1 100%;
+    /* 不铺满整行：搜索是次要动作，给它一个上限，标题才不会被挤走 */
+    max-width: 520px;
+    margin-left: auto;
 }
 
-.search-fold[open] > .search-toggle {
-    align-self: flex-end;
+.search-fold[open] .search-toggle {
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-3);
 }
 
-.search-fold-bar {
-    margin-top: var(--space-3);
+/* 展开后"搜索"两个字没用了 —— 放大镜已经在那个位置 */
+.search-fold[open] .search-toggle-text {
+    display: none;
 }
 
 /*
- * 地区选择器要按内容定宽。
+ * Chrome 134+ 会把 <details> 里除 <summary> 之外的内容包进一个
+ * ::details-content 包装层。于是 details 的 flex 项是「summary + 包装层」，
+ * 给 .search-form 写的 flex:1 落在包装层**内部**，对它自己的宽度毫无作用 ——
+ * 实测输入框只有 173px（表单按内容收缩）。
  *
- * 全局有一条 `select { width: 100% }`（表单控件统一铺满），在这里会把
- * 整个搜索行让给下拉框 —— 截图里输入框几乎不可见就是这个原因。
- * 这条的选择器权重 (0,1,1) 压得住全局的 (0,0,1)。
+ * 这里把包装层也变成 flex 并让它吃掉剩余空间。
+ * 不支持该伪元素的引擎（Firefox / Safari 直接把表单当 details 的子元素）
+ * 会整条忽略，那边 .search-form 的 flex:1 本来就生效 —— 两边都对。
  */
-.search-fold-bar select {
-    width: auto;
-    flex: none;
-    min-width: 140px;
+.search-fold[open]::details-content {
+    display: flex;
+    flex: 1;
+    gap: var(--space-2);
+    min-width: 0;
 }
 
-.discover-charts {
-    margin-top: var(--space-4);
+.search-form {
+    display: flex;
+    flex: 1;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+/*
+ * 输入框要显式收回这一行：全局有 input{width:100%}（表单铺满），
+ * 不覆盖的话它会撑破 flex 容器。
+ */
+.search-form input {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+}
+
+/* --- 试听按钮（卡片叠层 + 曲目行） -------------------------------- */
+/*
+ * 卡片上的叠层按钮：常驻可见，不靠 hover。
+ * 触屏没有 hover，用"悬停才出现"的话手机上一个都点不到。
+ */
+.chart-art .pv,
+.cover-art .pv {
+    position: absolute;
+    right: var(--space-2);
+    bottom: var(--space-2);
+    z-index: 2;
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--surface) 78%, transparent);
+    color: var(--fg);
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+}
+
+/* 悬停出现的下载面板层级更高，两者位置错开（面板铺满、按钮缩在角上） */
+.chart-art .pv:hover,
+.cover-art .pv:hover {
+    background: var(--accent);
+    color: #04121b;
+}
+
+/* 正在播的卡片：把按钮变成"暂停"的样子，一眼看出是哪张 */
+.chart-art .pv.playing,
+.cover-art .pv.playing {
+    background: var(--accent);
+    color: #04121b;
+}
+
+/*
+ * 曲目行里的试听：文字按钮，跟"下载"并排，低对比不抢曲名。
+ */
+.pv-tr {
+    flex: none;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-pill);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: var(--text-xs);
+    padding: 2px var(--space-2);
+    cursor: pointer;
+    opacity: 0.75;
+}
+
+.tracklist li:hover .pv-tr,
+.pv-tr:focus-visible {
+    opacity: 1;
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+@media (hover: none) {
+    .pv-tr {
+        opacity: 1;
+    }
 }
 
 @media (max-width: 640px) {
@@ -3436,11 +3525,16 @@ body:has(.player:not([hidden])) {
         font-size: var(--text-xl);
     }
 
-    /* 窄屏把格子收小一点，一条能多露两张 */
+    /* 窄屏没有余量，搜索展开后铺满可用宽度 */
+    .search-fold[open] {
+        max-width: none;
+    }
+
     .discover-charts .chart-strip {
         grid-auto-columns: 140px;
     }
 }
+
 
 /* --- 发现页：为你推荐 -------------------------------------------------- */
 /*

@@ -60,6 +60,19 @@ const meta = (extra) => JSON.stringify(Object.assign({
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>
         <% } %>
         <%#
+          试听按钮：放在下载层**之外**，因为下载层是 hover 才推出的，
+          而试听要常驻可见（触屏没有 hover）。它压在封面右下角，
+          层级比下载层高，所以展开下载层时仍然点得到。
+
+          只有单曲/MV 这类目录直接给了 previews 的条目才有；
+          专辑与歌单没有整条的试听地址，就不出按钮。
+        %>
+        <% if (r.previewUrl) { %>
+            <button class="pv" data-play-preview="<%= r.previewUrl %>"
+                    data-play-name="<%= r.name %>" data-play-artist="<%= r.artistName %>"
+                    title="试听 30 秒" aria-label="试听 <%= r.name %>">▶</button>
+        <% } %>
+        <%#
             **下载选项从封面内部自下而上推出**（hover / 聚焦时；触屏常驻）。
 
             为什么不把按钮压在封面中央：那会遮住封面本身，而封面是这个界面里

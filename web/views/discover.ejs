@@ -1,13 +1,17 @@
 <%- include("partials/head") %>
 
 <%#
-  发现页（首页）—— 榜单为主，搜索收在按钮后面。
+  发现页（首页）—— 「为你推荐」与榜单为主，搜索收在按钮后面。
 
   为什么把搜索折起来：搜索是"我有明确目标"时才用的动作，而首页
   该回答的是"有什么可听"。常驻一个大输入框会让页面第一眼像个搜索工具，
-  把榜单挤到折叠线以下 —— 而榜单才是没有目标时唯一有用的东西。
+  把内容挤到折叠线以下 —— 而内容才是没有目标时唯一有用的东西。
 
-  搜索仍然是一等公民：点一下按钮就展开并自动聚焦，回车即搜。
+  展开后的形状是重点：那个胶囊（<summary>）本身就是输入行的**放大镜图标**，
+  收起时是"🔍 搜索"、展开后只剩图标并挪到输入框前面。
+  之前收起态的胶囊和提交按钮同时显示两个"搜索"，很难看。
+
+  商店选择不放这里：结果页 /search 自己有一个，两处都能改只会互相不一致。
 %>
 
 <section class="hero discover-hero">
@@ -23,14 +27,11 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                     <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
                 </svg>
-                <span>搜索</span>
+                <span class="search-toggle-text">搜索</span>
             </summary>
-            <form class="hero-bar search-fold-bar" action="/search" method="get" role="search">
-                <div class="hero-field">
-                    <input id="discover-q" name="q" placeholder="歌名 / 艺人 / 专辑…" autocomplete="off" required
-                           aria-label="搜索 Apple Music">
-                </div>
-                <%- include("partials/region-select", { name: "region", id: "discover-region", selected: "", inheritLabel: `默认（${defaultRegionLabel}）` }) %>
+            <form class="search-form" action="/search" method="get" role="search">
+                <input id="discover-q" name="q" placeholder="歌名 / 艺人 / 专辑…" autocomplete="off" required
+                       aria-label="搜索 Apple Music">
                 <button type="submit" class="hero-go">搜索</button>
             </form>
         </details>
@@ -60,7 +61,6 @@
   榜单容器。data-region 供卡片拼详情页链接：榜单是按这个商店取的，
   跳转时要带上，否则点进专辑会落到别的区的记录上。
 
-  没有 hidden：首页的榜单就是主角，不再"有任务时才显示"。
   取不到时由 charts.js 把整块藏起来（不留红框）。
 %>
 <section class="card discover-charts" id="charts" data-region="<%= telemetry ? telemetry.storefront : "" %>">
@@ -72,7 +72,7 @@
 </section>
 
 <%#
-  catalog-ui.js 提供 escHtml/escAttr/WbArt —— 发现页与榜单共用同一份实现。
+  catalog-ui.js 提供 escHtml/escAttr/WbArt/previewBtn —— 发现页与榜单共用同一份实现。
   顺序重要：共享工具必须排在两个渲染脚本之前（defer 保证按文档顺序执行）。
 %>
 <script src="/static/catalog-ui.js?v=<%= assetVersion %>" defer></script>

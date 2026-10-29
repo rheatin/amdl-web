@@ -131,6 +131,8 @@ export type SearchItem = {
     durationMs?: number;
     /** 目录给的增强 HLS 清单地址（音质明细的首选取数来源，见 formatsFromCatalog）。 */
     enhancedHls?: string;
+    /** 30 秒试听地址（不加密，可直接给 <audio>）。没有就 undefined，界面不显示试听按钮。 */
+    previewUrl?: string;
 };
 
 type RawAttrs = {
@@ -147,6 +149,12 @@ type RawAttrs = {
     extendedAssetUrls?: { enhancedHls?: string };
     /** 歌单/电台的「策划方」（Apple Music、Apple Music 国语流行…）。歌曲没有这个字段。 */
     curatorName?: string;
+    /**
+     * 30 秒试听片段。**不加密** —— 实测直接 GET 就返回普通 MP4（前 12 字节是
+     * `ftyp`/`M4A `），既不需要 wrapper，也不需要下载整首。
+     * 只有单曲/有曲目的条目会给；专辑、歌单本身不给（要取其 tracks 的）。
+     */
+    previews?: Array<{ url?: string }>;
     /* --- 详情页要用的字段（目录会在 tracks 与记录上给，但类型里之前没声明） --- */
     discNumber?: number;
     trackNumber?: number;
@@ -221,7 +229,8 @@ export async function searchCatalog(
                 trackCount: a.trackCount,
                 releaseDate: a.releaseDate,
                 durationMs: a.durationInMillis,
-                enhancedHls: enhancedHlsOf(item)
+                enhancedHls: enhancedHlsOf(item),
+                previewUrl: previewUrlOf(a)
             });
         }
     }
@@ -292,7 +301,8 @@ export async function fetchCharts(
                 trackCount: a.trackCount,
                 releaseDate: a.releaseDate,
                 durationMs: a.durationInMillis,
-                enhancedHls: enhancedHlsOf(item)
+                enhancedHls: enhancedHlsOf(item),
+                previewUrl: previewUrlOf(a)
             };
         });
         if (items.length > 0) out.push({ type: key.replace(/s$/, ""), chartName: chart.name ?? "", items });
@@ -472,6 +482,8 @@ export type ItemTrack = {
     /** 是否有歌词（目录会给 hasLyrics / hasTimeSyncedLyrics） */
     hasLyrics?: boolean;
     hasTimeSyncedLyrics?: boolean;
+    /** 30 秒试听地址（不加密）。详情页逐曲试听靠它。 */
+    previewUrl?: string;
 };
 
 export type ItemDetail = {
@@ -539,7 +551,8 @@ export async function itemDetail(
                 trackNumber: no,
                 url: ta.url ?? "",
                 hasLyrics: ta.hasLyrics,
-                hasTimeSyncedLyrics: ta.hasTimeSyncedLyrics
+                hasTimeSyncedLyrics: ta.hasTimeSyncedLyrics,
+                previewUrl: previewUrlOf(ta)
             };
         });
 
@@ -928,7 +941,8 @@ export async function personalShelves(limit = 12): Promise<Shelf[]> {
                         url: ia.url ?? "",
                         trackCount: ia.trackCount,
                         releaseDate: ia.releaseDate,
-                        durationMs: ia.durationInMillis
+                        durationMs: ia.durationInMillis,
+                        previewUrl: previewUrlOf(ia)
                     };
                 })
                 /* 空 id 的条目点了也没用，直接丢掉 */
@@ -945,4 +959,21 @@ export async function personalShelves(limit = 12): Promise<Shelf[]> {
         return out;
     }
     return [];
+}
+
+/**
+ * 从条目的 attributes 里取试听地址。
+ *
+ * 只认 **https**：这个值会直接进 \`<audio src>\`，而目录内容算外部输入。
+ * 拦掉非 https 既挡住 \`javascript:\` 这类注入，也挡住目录给出一条奇怪值的情况。
+ * 取不到就返回 undefined，界面据此不显示试听按钮（而不是显示一个点了没声的按钮）。
+ */
+export function previewUrlOf(attrs: RawAttrs | undefined): string | undefined {
+    const list = attrs?.previews;
+    if (!Array.isArray(list)) return undefined;
+    for (const p of list) {
+        const u = (p?.url ?? "").trim();
+        if (u.startsWith("https://")) return u;
+    }
+    return undefined;
 }

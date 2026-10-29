@@ -22,10 +22,10 @@ const meta = (d, extra) => JSON.stringify(Object.assign({
 
 <% if (error) { %>
     <section class="card"><p class="parse-result err">取不到这条记录：<%= error %></p>
-        <p class="row"><a class="ghost" href="/">← 回到工作台</a></p></section>
+        <p class="row"><a class="ghost" href="/">← 返回发现</a></p></section>
 <% } else if (!detail) { %>
     <section class="card"><div class="empty">这条记录不存在，或者当前商店没有它。</div>
-        <p class="row" style="margin-top:var(--space-4)"><a class="ghost" href="/">← 回到工作台</a></p></section>
+        <p class="row" style="margin-top:var(--space-4)"><a class="ghost" href="/">← 返回发现</a></p></section>
 <% } else { %>
     <section class="card accent">
         <div class="item-hero">
@@ -103,6 +103,17 @@ const meta = (d, extra) => JSON.stringify(Object.assign({
                                     data-codec="alac"
                                     data-meta='<%- JSON.stringify({ title: t.name, artistName: t.artistName, albumName: detail.kind === "album" ? detail.name : t.albumName, artwork: detail.artwork, durationMs: t.durationMs }) %>'>下载</button>
                         <% } %>
+                        <%#
+                          逐曲试听：目录给的 30 秒片段，**不加密**（实测直接 GET 返回普通 MP4），
+                          所以这里不碰 wrapper、不下载整首、也不进播放缓存 —— 浏览器直连 CDN。
+                          没有 previewUrl 的曲目不给按钮（比给一个点了没声的按钮好）。
+                        %>
+                        <% if (t.previewUrl) { %>
+                            <button class="pv-tr" data-play-preview="<%= t.previewUrl %>"
+                                    data-play-name="<%= t.name %>"
+                                    data-play-artist="<%= t.artistName %>"
+                                    title="试听 30 秒">▶ 试听</button>
+                        <% } %>
                     </li>
                 <% }) %>
             </ul>
@@ -112,7 +123,7 @@ const meta = (d, extra) => JSON.stringify(Object.assign({
     <% } %>
 
     <p class="row" style="margin-top:var(--space-5)">
-        <a class="ghost" href="/">← 回到工作台</a>
+        <a class="ghost" href="/">← 返回发现</a>
         <a class="ghost" href="<%= detail.url %>" target="_blank" rel="noreferrer">在 Apple Music 打开</a>
     </p>
 <% } %>

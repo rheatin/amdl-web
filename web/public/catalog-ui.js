@@ -44,3 +44,26 @@ const escHtml = (s) =>
 /** 属性值同样要转义 —— 单引号包裹时 & 和 ' 最关键。 */
 const escAttr = (s) => escHtml(s);
 
+
+/**
+ * 试听按钮 —— 榜单、推荐货架、搜索结果共用。
+ *
+ * ## 为什么能直接播
+ *
+ * Apple 目录的 `attributes.previews` 是 **30 秒、不加密** 的 AAC 片段：
+ * 实测直接 GET 就返回普通 MP4（头 12 字节是 `ftyp`/`M4A `），
+ * 既不需要 wrapper-lite 解密，也不需要先把整首歌下下来。
+ * 而且 `<audio>` 加载跨源媒体**不受 CORS 限制**，所以浏览器直连 CDN，
+ * 一点流量都不过 NAS。
+ *
+ * ## 没有 previewUrl 就不出按钮
+ *
+ * 专辑/歌单/电台条目本身没有 previewUrl（要取其内层曲目）。
+ * 给一个点了没声的按钮比不给按钮更糟。
+ */
+const previewBtn = (it) =>
+    it.previewUrl
+        ? `<button class="pv" data-play-preview="${escAttr(it.previewUrl)}"
+                 data-play-name="${escAttr(it.name)}" data-play-artist="${escAttr(it.artistName)}"
+                 title="试听 30 秒" aria-label="试听 ${escAttr(it.name)}">▶</button>`
+        : "";

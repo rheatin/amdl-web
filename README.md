@@ -21,6 +21,9 @@
 - **下载后统一文件权限**（默认 `666`），便于以其它 uid 运行的媒体服务器读取。
 - **元数据地区可按任务覆盖**：选「日本 jp」即把链接改写成日区，文件名与标签拿到日文原名；
   目标区没有这条记录时**自动回退**并在预览里说明；可选「自动找等价记录」（要求艺人+时长一致，有下错风险）。
+- **榜单 / 推荐 / 搜索结果里可以试听**：目录给的 30 秒片段**不加密**
+  （实测直接 GET 就返回普通 MP4，头 12 字节是 `ftyp`/`M4A `），
+  所以浏览器**直连 Apple CDN** 播放 —— 不碰 wrapper、不下整首、流量不过 NAS。
 - **网页里直接播放音乐库**：底部常驻播放条、整张专辑作为队列、可拖动进度条。
   引擎落盘的是 ALAC，而 Chrome / Firefox **放不了 ALAC** —— 所以首次播放时服务端把
   它转成**等价的 FLAC**（两者都是无损，只是熵编码不同，不损失任何信息；实测约 1 秒），
@@ -205,6 +208,7 @@ docker compose logs -f wrapper-lite
 | GET | `/api/jobs/:id/events` | SSE：`hello` / `log` / `status` |
 | GET | `/api/config` | 只读配置快照（凭据打码） |
 | POST | `/api/config` | 写回 `config.yaml`（白名单 + 取值校验 + 原地写，写完立即生效） |
+| GET | `/api/discover` | 「为你推荐」：按账号个性化的货架，Apple 每日刷新（需 `media-user-token`） |
 | GET | `/api/play?path=` | 播放库内文件：首次边转 FLAC 边发，之后支持 Range（可拖进度条） |
 | POST | `/api/apple/2fa` | 提交 Apple 2FA 验证码 |
 
