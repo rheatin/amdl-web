@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
     capabilityFor,
     fetchCharts,
+    stationNextTracks,
     hasUserToken,
     itemDetail,
     personalShelves,
@@ -987,6 +988,26 @@ app.post("/api/config", requireAuth, (req: Request, res: Response) => {
         });
     } catch (e) {
         res.status(400).json({ error: (e as Error).message });
+    }
+});
+
+/**
+ * 电台：取接下来要播的曲目。
+ *
+ * 界面在曲目快用完时再来一批（Apple 每次只给 2 首，且每次调用都往前推），
+ * 所以这是一个"续杯"接口，而不是一次取完的列表。
+ *
+ * 没有 media-user-token 时返回空数组：电台本身是账号能力。
+ */
+app.get("/api/station/next/:id", requireAuth, async (req: Request, res: Response) => {
+    const seed = typeof req.query["from"] === "string" ? req.query["from"] : undefined;
+    /* 电台 id 形如 ra.xxxx / ra.u-xxxx；形状不对直接不给结果，别把脏值送进 URL */
+    const id = String(req.params.id ?? "");
+    try {
+        const tracks = await stationNextTracks(id, seed);
+        res.json({ tracks, hasUserToken: hasUserToken() });
+    } catch (err) {
+        res.json({ tracks: [], hasUserToken: hasUserToken(), note: err instanceof Error ? err.message : String(err) });
     }
 });
 

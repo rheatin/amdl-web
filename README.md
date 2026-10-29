@@ -209,6 +209,7 @@ docker compose logs -f wrapper-lite
 | GET | `/api/config` | 只读配置快照（凭据打码） |
 | POST | `/api/config` | 写回 `config.yaml`（白名单 + 取值校验 + 原地写，写完立即生效） |
 | GET | `/api/discover` | 「为你推荐」：按账号个性化的货架，Apple 每日刷新（需 `media-user-token`） |
+| GET | `/api/station/next/:id` | 电台接下来要播的曲目（每次 2 首，调用即前移） |
 | GET | `/api/play?path=` | 播放库内文件：首次边转 FLAC 边发，之后支持 Range（可拖进度条） |
 | POST | `/api/apple/2fa` | 提交 Apple 2FA 验证码 |
 
@@ -235,7 +236,20 @@ docker compose logs -f wrapper-lite
 `authorization-token` 配 `media-user-token` 会 401，必须用从 music.apple.com
 bundle 抓到的那个（`src/ampmusic.ts` 的 `tokenCandidates`）。
 
-电台货架（`stations`）没有站内页面，卡片直接外链到 Apple Music。
+### 电台不是直播流
+
+实测 CN 区**每一个** station 的 `playParams` 都是 `{format:"tracks", hasDrm:false}`，
+`isLive` 一律 false —— 包括用户自己的个性化电台（`ra.u-*`）与编辑电台
+（贝多芬电台、硬摇滚电台…）。也就是说 Apple 在这里给的「电台」本质是
+**服务端排好的一串曲目**，不是需要解 DRM 的直播流。
+
+所以电台播放不碰 Widevine / FairPlay：`POST /v1/me/stations/next-tracks/<id>`
+（必须 POST，GET 是 405）每次给 **2 首**，且每次调用都往前推
+（实测连调三次拿到六首不同的）。界面在剩不到 3 首时再要一批，于是连续播。
+带 `{"trackId":"<id>"}` 可以从某首歌点起。
+
+卡片标题仍是外链，想去官网看照样能去。
+若哪天遇到 `format:"stream"` 的台，这条路径取不到流，需要另做 DRM 处理。
 
 ## 🧱 构建相关改动（相对上游）
 

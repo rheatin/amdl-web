@@ -45,11 +45,31 @@ function shelfCard(it, region) {
         "</div>";
 
     if (!kind) {
-        const href = it.url || "";
-        /* 只放行 http(s)：目录偶尔会给相对值或空，那种卡片点了没去处，不如不出 */
-        if (!/^https?:\/\//i.test(href)) return "";
-        return '<a class="chart-card" href="' + escAttr(href) + '" target="_blank" rel="noreferrer">' +
-            artBlock + meta + "</a>";
+        /*
+         * 电台卡。
+         *
+         * 实测 CN 区每个 station 的 playParams 都是 {format:"tracks", hasDrm:false}
+         * —— 它是"服务端排好的一串曲目"，不是需要解 DRM 的直播流，
+         * 所以这里点 ▶ 是去取 next-tracks 连续播（见 player.js 的 radio）。
+         *
+         * 仍然是 <article> 而不是 <a>：里面要放按钮。
+         * "在 Apple Music 打开"的去处保留在标题上，两种用法都不丢。
+         */
+        const open = /^https?:\/\//i.test(it.url || "")
+            ? '<a class="chart-ext" href="' + escAttr(it.url) + '" target="_blank" rel="noreferrer" title="在 Apple Music 打开">' + escHtml(it.name) + "</a>"
+            : '<div class="chart-title ellipsis">' + escHtml(it.name) + "</div>";
+        return '<article class="chart-card" data-station-id="' + escAttr(it.id) + '">' +
+            '<div class="chart-art' + (art ? "" : " no-art") + '">' +
+            (art ? '<img src="' + escAttr(art) + '" alt="" loading="lazy" width="200" height="200">' : "") +
+            '<button class="pv" data-radio-id="' + escAttr(it.id) +
+            '" data-radio-name="' + escAttr(it.name) +
+            '" title="连续播放这个电台" aria-label="播放 ' + escAttr(it.name) + '">▶</button>' +
+            "</div>" +
+            '<div class="chart-meta">' +
+            '<div class="chart-title ellipsis">' + open + "</div>" +
+            '<div class="chart-sub ellipsis">' + escHtml(it.artistName) + "</div>" +
+            "</div>" +
+            "</article>";
     }
 
     let href = "/item?kind=" + encodeURIComponent(kind) + "&id=" + encodeURIComponent(it.id);

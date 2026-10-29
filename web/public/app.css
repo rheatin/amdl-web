@@ -3572,3 +3572,22 @@ a.chart-card {
 a.chart-card:hover .chart-title {
     color: var(--accent);
 }
+
+/* --- 电台卡 ---------------------------------------------------------- */
+/*
+ * 标题本身是个外链（站内没有电台页），但它不该长得像链接：
+ * 卡片的主操作是那个 ▶，标题只是"想去官网看看"时的退路。
+ */
+.chart-ext {
+    color: inherit;
+    text-decoration: none;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chart-ext:hover {
+    text-decoration: underline;
+    color: var(--accent);
+}

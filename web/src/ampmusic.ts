@@ -977,3 +977,87 @@ export function previewUrlOf(attrs: RawAttrs | undefined): string | undefined {
     }
     return undefined;
 }
+
+/* -------------------------------------------------------------------- 电台 */
+
+/** 电台将要播的一首歌。 */
+export type StationTrack = {
+    id: string;
+    name: string;
+    artistName: string;
+    albumName: string;
+    durationMs?: number;
+    artwork: string;
+    /** 该曲的目录页（拼详情页链接用） */
+    url: string;
+    /** 30 秒片段（不加密）。电台连续播靠它 */
+    previewUrl?: string;
+};
+
+/**
+ * 取电台的**后续曲目**。
+ *
+ * ## 实测结论：CN 区没有"直播流"电台
+ *
+ * 目录里每一个 station 的 `playParams` 都是 `{format:"tracks", hasDrm:false}`，
+ * `isLive` 一律 false —— 包括用户自己的个性化电台（`ra.u-*`）与编辑电台
+ * （贝多芬电台、硬摇滚电台…）。也就是说 Apple 在这些地区给的"电台"
+ * 本质是**服务端排好的一串曲目**，不是需要解 DRM 的直播流。
+ *
+ * 这反而是好消息：不用碰 Widevine / FairPlay，用我们已有的能力就能做电台。
+ * （若哪天遇到 `format:"stream"` 的台，这里拿不到流，界面会退化成外链。）
+ *
+ * ## 接口的两个脾气
+ *
+ *   · 必须 **POST** —— GET 返回 405（试过）
+ *   · 每次只给 **2 首**，且每次调用都往前推（实测连调三次拿到六首不同的）
+ *     所以连续播放要"快用完就再要一批"，不能一次取完
+ *   · 带 `{"trackId": "<id>"}` 可以**从某首歌点起**（实测生效）
+ *
+ * 需要 media-user-token；没有就返回空数组（界面据此不显示电台播放按钮）。
+ */
+export async function stationNextTracks(adamId: string, seedTrackId?: string): Promise<StationTrack[]> {
+    const mut = musicUserToken();
+    if (!mut || !/^ra\.[\w.-]+$/.test(adamId)) return [];
+
+    const url = new URL(`https://amp-api.music.apple.com/v1/me/stations/next-tracks/${encodeURIComponent(adamId)}`);
+    url.searchParams.set("l", language());
+
+    const list = await tokenCandidates();
+    const ordered = cached ? [cached.token, ...list.filter((t) => t !== cached!.token)] : list;
+
+    for (const token of ordered) {
+        const res = await fetch(url, {
+            method: "POST",
+            headers: {
+                authorization: `Bearer ${token}`,
+                "music-user-token": mut,
+                origin: "https://music.apple.com",
+                "user-agent": UA,
+                accept: "application/json",
+                "content-type": "application/json"
+            },
+            body: seedTrackId ? JSON.stringify({ trackId: seedTrackId }) : "{}"
+        });
+        if (res.status === 401 || res.status === 403) continue;
+        if (!res.ok) return [];
+
+        const body = (await res.json()) as { data?: RawResource[] };
+        return (body.data ?? [])
+            .map((s) => {
+                const a = s.attributes ?? {};
+                return {
+                    id: s.id ?? "",
+                    name: a.name ?? "(untitled)",
+                    artistName: a.artistName ?? "",
+                    albumName: a.albumName ?? "",
+                    durationMs: a.durationInMillis,
+                    artwork: a.artwork?.url ?? "",
+                    url: a.url ?? "",
+                    previewUrl: previewUrlOf(a)
+                };
+            })
+            .filter((t) => t.id !== "");
+    }
+    return [];
+}

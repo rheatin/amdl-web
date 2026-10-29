@@ -38,6 +38,15 @@ function markOrigin(playing) {
     if (!originBtn) return;
     originBtn.classList.toggle("playing", playing);
 }
+
+/*
+ * 电台模式。
+ *
+ * Apple 的 next-tracks 每次只给 2 首，且每次调用都往前推（实测连调三次
+ * 拿到六首不同的），所以电台不是"取完一份列表"，而是**快用完就续杯**。
+ * id 为 null 表示当前队列不是电台 —— 那时试听放完就该停。
+ */
+const radio = { id: null, name: "", filling: false };
 /** 已经预取过的 path，避免重复请求 */
 const prefetched = new Set();
 
@@ -89,6 +98,56 @@ function load(list, at) {
         if (e.name !== "NotAllowedError") console.warn("播放失败", e);
     });
     document.title = `${t.song} — amdl-web`;
+}
+
+/**
+ * 再要一批曲目，追加到队列尾部。
+ *
+ * 按 previewUrl 去重：Apple 偶尔会把刚给过的歌再给一次，
+ * 连着听同一首两遍比断一跳更难受。
+ */
+async function radioFill() {
+    if (!radio.id || radio.filling) return;
+    radio.filling = true;
+    try {
+        const r = await fetch("/api/station/next/" + encodeURIComponent(radio.id));
+        const d = await r.json();
+        const fresh = (d.tracks ?? [])
+            .filter((t) => t.previewUrl)
+            .map((t) => ({ preview: true, url: t.previewUrl, song: t.name, artist: t.artistName }))
+            .filter((t) => !queue.some((q) => q.url === t.url));
+        for (const t of fresh) queue.push(t);
+    } catch {
+        /* 续杯失败：把手上剩下的听完就好，不该打断播放 */
+    } finally {
+        radio.filling = false;
+    }
+}
+
+/**
+ * 开始一个电台。
+ *
+ * 与 load() 不同：队列是**边播边长**的，所以这里先建空队列、拉两首，
+ * 再交给 load() —— 之后每次接近队尾都再拉。
+ */
+async function startRadio(id, name, btn) {
+    radio.id = id;
+    radio.name = name;
+    queue = [];
+    index = -1;
+    await radioFill();
+    if (queue.length === 0) {
+        radio.id = null;
+        show();
+        elTitle.textContent = name || "电台";
+        elSub.textContent = "这个电台暂时取不到曲目";
+        return;
+    }
+    if (btn) {
+        if (originBtn && originBtn !== btn) originBtn.classList.remove("playing");
+        originBtn = btn;
+    }
+    load(queue, 0);
 }
 
 function next() {
@@ -160,14 +219,25 @@ if (audio && bar) {
 
     audio.addEventListener("ended", () => {
         /*
-         * 试听放完就停：它是一首 30 秒的**片段**，接着自动播下一首的片段
-         * 会变成"永远听不完任何东西"，比手动点更烦。
+         * 两种结束语义，故意不一样：
+         *
+         *   · 普通试听（点了某首歌的 ▶）→ **停下**。它只是 30 秒片段，
+         *     自动连播片段会变成"永远听不完任何东西"，比手动点更烦。
+         *   · 电台（startRadio 进来的）→ **继续往下**，并在接近队尾时续杯。
+         *     电台的整个意义就是不停歇地给下一首。
          */
         const cur = queue[index];
-        if (!cur || !cur.preview) {
+        const advance = radio.id !== null || !(cur && cur.preview);
+        if (advance) {
+            /* 剩不到 3 首就去要下一批：Apple 每次只给 2 首 */
+            if (radio.id && queue.length - (index + 1) < 3) void radioFill();
             if (index + 1 < queue.length) {
                 load(queue, index + 1);
                 return;
+            }
+            if (radio.id) {
+                /* 刚要的可能还没回来，稍后再试一次，别就此停住 */
+                setTimeout(() => { if (index + 1 < queue.length) load(queue, index + 1); }, 1500);
             }
         }
         elToggle.textContent = "▶";
@@ -228,6 +298,14 @@ if (audio && bar) {
 document.addEventListener("click", (ev) => {
     const t = ev.target instanceof Element ? ev.target : null;
     if (!t) return;
+    const radioBtn = t.closest("[data-radio-id]");
+    if (radioBtn) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        void startRadio(radioBtn.getAttribute("data-radio-id"), radioBtn.getAttribute("data-radio-name") || "", radioBtn);
+        return;
+    }
+
     const btn = t.closest("[data-play-path], [data-play-preview]");
     if (!btn) return;
 
@@ -248,6 +326,9 @@ document.addEventListener("click", (ev) => {
         );
         return;
     }
+
+    /* 从电台切回具体曲目：关掉电台模式，不然它会继续往队列里塞歌 */
+    radio.id = null;
 
     ev.preventDefault();
     ev.stopPropagation();

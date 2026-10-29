@@ -178,6 +178,9 @@ SSE 连接建立之前就已发出** —— 若 `hello` 只回放日志而不同
 | 备份文件建不出来（`.bak` 报 `EACCES`） | `/engine` 目录属于 root，只把单文件挂了进去 | 备份写到 `/data`（可写卷），见 `writeEngineConfigTo` |
 | 浏览器放不了库里的 `.m4a` | 引擎落盘的是 **ALAC**；实测 Chrome `MSE audio/mp4; codecs="alac"` → false（Firefox 同样不支持，只有 Safari 系可以） | 播放时转成 **FLAC**（同为无损，仅换熵编码，实测 5 分钟曲目 1.1 秒），缓存到 `data/web/playcache/`。见 `src/playcache.ts` |
 | 播放条把进度条挤成一条线 | 全局有 `input:not([type="radio"]) { width: 100% }`（权重 0,1,1），单个类名（0,1,0）压不住 | 音量条写成 `.player .player-volume`（0,2,0），进度条显式 `width: auto` |
+| `<details>` 里的表单不跟着涨宽 | Chrome 134+ 把 `<details>` 中除 `<summary>` 外的内容包进 `::details-content`，写在子元素上的 `flex:1` 落在包装层**内部**，对包装层自己的宽度毫无作用 | 给 `.xxx[open]::details-content` 也写 `display:flex; flex:1; min-width:0`；不支持该伪元素的内核整条忽略，那边子元素的 flex:1 本来就生效 |
+| 无头浏览器里"点了没播" | `element.click()` **不算用户手势**，被自动播放策略拦下（NotAllowedError） | 用 CDP `Input.dispatchMouseEvent` 派发真实 mousePressed/mouseReleased 才算数 |
+| 电台取不到曲目 | `/v1/me/stations/next-tracks/<id>` 必须 **POST**（GET 返回 405），且要 media-user-token | 见 README「电台不是直播流」 |
 | 网页提交 2FA 写不进 `data/wrapper/` | 上游 entrypoint 会 `chown -R root:root` 该目录 | 预置 `2fa.txt` 并 `chmod 666`（`chown` 不改模式位） |
 | rootless 启动器起不来 | 它需要在容器内挂载 procfs，部分内核不允许（`cap_add: SYS_ADMIN` 亦无效） | 使用 `privileged: true`（与上游 README 一致），或改用上游的 `wrapper-lite-qemu` |
 
