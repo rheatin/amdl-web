@@ -3329,11 +3329,11 @@ body:has(.player:not([hidden])) {
 /* --- 发现页（首页）----------------------------------------------------- */
 /*
  * 标题与搜索胶囊同一行：搜索是次要动作，不该单独占一行高度。
+ *
+ * 这里**不要**再抄工作台的 `padding-bottom:0`：那条是给"hero 下面还有选项行"
+ * 准备的，发现页的 hero 里只有这一行，清零下内边距会让整块往上偏 20px
+ * （上下不对称），看上去就是没居中。用 .hero 原本的对称内边距。
  */
-.discover-hero {
-    padding-bottom: 0;
-}
-
 .discover-head {
     display: flex;
     align-items: center;
