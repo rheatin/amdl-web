@@ -131,6 +131,14 @@ export type SearchItem = {
     durationMs?: number;
     /** 目录给的增强 HLS 清单地址（音质明细的首选取数来源，见 formatsFromCatalog）。 */
     enhancedHls?: string;
+    /**
+     * Apple 的原始 `audioTraits`（如 ["lossless","hi-res-lossless","atmos"]）。
+     *
+     * 搜索结果**自带**这个字段，零额外请求。它足以判定"有没有 Hi-Res / 有没有 Atmos"，
+     * 但说不出具体 kHz/位深 —— 所以列表页的芯片用它，明细仍走 wrapper（见 audioformat.ts
+     * 的 formatsFromTraits 注释，那里记着目录清单与 wrapper 清单是两个不同文件）。
+     */
+    traits: string[];
     /** 30 秒试听地址（不加密，可直接给 <audio>）。没有就 undefined，界面不显示试听按钮。 */
     previewUrl?: string;
 };
@@ -230,7 +238,8 @@ export async function searchCatalog(
                 releaseDate: a.releaseDate,
                 durationMs: a.durationInMillis,
                 enhancedHls: enhancedHlsOf(item),
-                previewUrl: previewUrlOf(a)
+                previewUrl: previewUrlOf(a),
+                traits: (a.audioTraits ?? []).map(String)
             });
         }
     }
@@ -302,7 +311,8 @@ export async function fetchCharts(
                 releaseDate: a.releaseDate,
                 durationMs: a.durationInMillis,
                 enhancedHls: enhancedHlsOf(item),
-                previewUrl: previewUrlOf(a)
+                previewUrl: previewUrlOf(a),
+                traits: (a.audioTraits ?? []).map(String)
             };
         });
         if (items.length > 0) out.push({ type: key.replace(/s$/, ""), chartName: chart.name ?? "", items });
@@ -942,7 +952,8 @@ export async function personalShelves(limit = 12): Promise<Shelf[]> {
                         trackCount: ia.trackCount,
                         releaseDate: ia.releaseDate,
                         durationMs: ia.durationInMillis,
-                        previewUrl: previewUrlOf(ia)
+                        previewUrl: previewUrlOf(ia),
+                        traits: (ia.audioTraits ?? []).map(String)
                     };
                 })
                 /* 空 id 的条目点了也没用，直接丢掉 */

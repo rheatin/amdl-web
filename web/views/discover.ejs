@@ -29,7 +29,15 @@
                 </svg>
                 <span class="search-toggle-text">搜索</span>
             </summary>
+            <%#
+              stream=1 是必须的：不带它，服务端会**阻塞式**渲染结果，
+              也就是先把每条结果的音质明细问一遍 wrapper 才发 HTML ——
+              用户点了"搜索"就只能对着浏览器的转圈等，页面上什么都没有。
+              带上它，首帧立刻返回（空列表），客户端 search.js 再把流接上，
+              观感就是"先出页面，再一张张出结果"。
+            %>
             <form class="search-form" action="/search" method="get" role="search">
+                <input type="hidden" name="stream" value="1">
                 <input id="discover-q" name="q" placeholder="歌名 / 艺人 / 专辑…" autocomplete="off" required
                        aria-label="搜索 Apple Music">
                 <button type="submit" class="hero-go">搜索</button>

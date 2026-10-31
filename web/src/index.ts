@@ -24,7 +24,7 @@ import {
     SEARCH_TRACK_PROBE_LIMIT,
     type TrackCapability
 } from "./ampmusic.js";
-import { presentFormat, type AudioFormatView } from "./audioformat.js";
+import { formatsFromTraits, presentFormat, type AudioFormatView } from "./audioformat.js";
 import { mapLimit } from "./concurrency.js";
 import type { AudioFormat } from "./format.js";
 
@@ -178,36 +178,17 @@ app.locals.assetVersion = ((): string => {
  */
 const SEARCH_PROBE_LIMIT = 3;
 
-async function decorateFormats(
-    items: Array<{ id: string; type: string; enhancedHls?: string }>,
-    storefrontOverride?: string
-): Promise<Array<{ formats: AudioFormatView[] }>> {
-    const empty = { formats: [] as AudioFormatView[] };
-    return mapLimit(items, SEARCH_PROBE_LIMIT, async (item) => {
-        if (!/^\d+$/.test(item.id)) return empty;
-        try {
-            if (item.type === "song") {
-                const formats = await formatsFromCatalog(item.id, item.enhancedHls, storefrontOverride);
-                return { formats: formats.map(presentFormat) };
-            }
-            if (item.type === "album") {
-                const tracks = await collectionTracks("albums", item.id, storefrontOverride);
-                const formats = await collectionFormats(tracks, SEARCH_TRACK_PROBE_LIMIT, storefrontOverride);
-                return { formats: formats.map(presentFormat) };
-            }
-            return empty;
-        } catch {
-            return empty;
-        }
-    });
+function decorateFormats(
+    items: Array<{ id: string; type: string; traits?: string[] }>
+): Array<{ formats: AudioFormatView[] }> {
+    return items.map((item) => ({ formats: formatsFromTraits(item.traits).map(presentFormat) }));
 }
 
-async function decorateSearchResults<T extends { id: string; type: string; enhancedHls?: string }>(
-    results: T[],
-    storefrontOverride?: string
-): Promise<Array<T & { formats: AudioFormatView[] }>> {
-    const quality = await decorateFormats(results, storefrontOverride);
-    return results.map((r, i) => ({ ...r, ...(quality[i] ?? { formats: [] }) }));
+/** 搜索页：从目录自带 traits 构建音质芯片，零额外请求。 */
+function decorateSearchResults(
+    results: Array<{ id: string; type: string; enhancedHls?: string; traits?: string[] }>
+): Array<{ formats: AudioFormatView[] }> {
+    return decorateFormats(results);
 }
 
 /**
@@ -314,20 +295,20 @@ function renderPartial(res: Response, name: string, locals: Record<string, unkno
 /**
  * 把搜索结果**流式**推给浏览器（NDJSON，一行一个事件）。
  *
- * 用户的原始抱怨是「没有任何状态显示，按钮也没有灰，一定是请求完才显示结果」——
- * 根因是搜索页把目录搜索（约 3 秒）与 12 条结果的音质探测（每条 0.78 秒、并发上限 3，
- * 实测十几秒）串在一次服务端渲染里，期间浏览器只能盯着上一页。
+ * 用户的原始抱怨是「没有任何状态显示，一定是请求完才显示结果」——
+ * 根因是搜索页把目录搜索与音质探测串在一次服务端渲染里。
  *
- * 于是拆成两个阶段，阶段之间**不再有整体等待**：
- *   * 阶段一 `meta` → `total` → 逐条 `card`（目录搜索一回来就发，界面立刻有东西）
- *   * 阶段二 逐条 `fill`（探测完一条回填一条：用 3 个 worker 抢队列，谁先回来谁先发）
+ * 现在只有一步：`meta` → `total` → 逐条 `card`。
  *
- * 记号：`card` 里 song/album 的音质区渲染成骨架（`data-fill-id`），`fill` 事件把骨架换掉。
- * 之所以要 `pendingFill` 兜底：`card` 与它的 `fill` 可能落在同一个 TCP 分片里，
- * 浏览器若先读到 fill，`[data-fill-id="…"]` 还不存在 —— 丢掉就等于这一条永远是骨架。
+ * 曾经的"骨架 + 逐条回填"两阶段是为音质探测（每条问 wrapper 约 780ms，26 条实测
+ * 23.9 秒）而设计的。但音质**档位**其实目录搜索结果就自带（`audioTraits`，零请求），
+ * 于是换成从 traits 出芯片 —— 回填这件事没有了存在理由，配套的 worker 队列、
+ * pendingFill 兜底、data-fill-id 骨架一起删掉。
  *
- * 客户端断开（用户按了 Esc、关了标签）时写会抛错，这里一律当成"提前收工"，
- * 不再继续探测后面的条目 —— 没人在等的 wrapper 请求不该继续占用 NAS。
+ * 具体的 kHz/位深仍然只在解析预览里给（那才是必须问 wrapper 的地方），
+ * 理由见 audioformat.ts 的 formatsFromTraits 注释。
+ *
+ * 客户端断开（按 Esc、关标签）时写会抛错，这里一律当成"提前收工"。
  */
 async function streamSearchResults(req: Request, res: Response, q: string, region: string): Promise<void> {
     res.writeHead(200, {
@@ -376,9 +357,6 @@ async function streamSearchResults(req: Request, res: Response, q: string, regio
         }
     }, 15_000);
 
-    // 客户端还没走到对应 card 的 fill（见上面的分片说明）
-    const pendingFill = new Map<string, string>();
-
     try {
         write({ t: "meta", q, region: region || "", regionName: regionLabel(region || storefront()) });
 
@@ -403,58 +381,24 @@ async function streamSearchResults(req: Request, res: Response, q: string, regio
                 ceilings
             });
 
-        // 阶段一：目录结果先全部落地（骨架），顺序与目录返回一致
+        // 一趟到位：card 里就是最终内容（音质档位来自目录自带的 traits）
         for (const r of items) {
             if (!alive) return;
             let html = "";
             try {
-                html = await renderPartial(res, "partials/result-item", { r, region, formatsFill: true, ceilings });
+                html = await renderPartial(res, "partials/result-item", {
+                    r: { ...r, formats: decorateFormats([r])[0].formats },
+                    region,
+                    formatsFill: false,
+                    ceilings
+                });
             } catch {
                 html = "";
             }
             if (!alive) return;
             if (html) write({ t: "card", id: String(r.id), html });
-            const ready = pendingFill.get(String(r.id));
-            if (ready) {
-                pendingFill.delete(String(r.id));
-                write({ t: "fill", id: String(r.id), html: ready });
-            }
         }
 
-        // 阶段二：只对 song/album 探测（artist 没有音质，MV 走视频轨道）。
-        // 用 3 个消费者抢同一条队列，而不是 mapLimit —— 后者要等整批跑完才返回，
-        // 又会变回"最后一条决定一切"。并发上限的用意见 concurrency.ts（保护同一台 NAS 上的 wrapper）。
-        const queue = items
-            .map((r, i) => ({ r, i }))
-            .filter(({ r }) => r.type === "song" || r.type === "album");
-        let cursor = 0;
-        const workers = Array.from({ length: Math.min(SEARCH_PROBE_LIMIT, queue.length) }, async () => {
-            for (;;) {
-                if (!alive) return;
-                const idx = cursor++;
-                if (idx >= queue.length) return;
-                const { r } = queue[idx]!;
-                if (!/^\d+$/.test(r.id)) continue;
-                let formats: AudioFormatView[] = [];
-                try {
-                    const one = await decorateFormats([{ id: r.id, type: r.type, enhancedHls: r.enhancedHls }], region || undefined);
-                    formats = one[0]?.formats ?? [];
-                } catch {
-                    formats = [];
-                }
-                if (!alive) return;
-                let html: string;
-                try {
-                    html = await fillHtml(r, formats);
-                } catch {
-                    continue;
-                }
-                if (!alive) return;
-                if (!write({ t: "fill", id: String(r.id), html })) pendingFill.set(String(r.id), html);
-            }
-        });
-        await Promise.all(workers);
-        if (!alive) return;
         write({ t: "done" });
     } finally {
         clearInterval(beat);
@@ -567,7 +511,7 @@ app.get("/search", requireAuth, async (req: Request, res: Response) => {
     // 代价是这一次渲染没有结果 —— 客户端在首帧之后马上把流接上，观感上就是"先出页面，再出结果"。
     // 没有 JS 的客户端不带这个参数，走的仍是原来那套完整服务端渲染。
     const streaming = req.query["stream"] === "1";
-    const withQuality = streaming ? results : await decorateSearchResults(results, region || undefined);
+    const withQuality = streaming ? results : decorateSearchResults(results);
 
     res.render("search", {
         q,
