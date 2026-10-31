@@ -1,20 +1,21 @@
 /*
- * 播放条 —— 队列、进度、切歌。
+ * 播放器 UI —— 播放库内/整首/30 秒片段与电台连续播。
  *
- * ## 为什么 src 直接指向 /api/play
+ * ## 三种音源，三种结束语义
  *
- * 服务端在该请求里完成「转 FLAC + 发文件」，并且支持 Range。
- * 所以浏览器自己就会做分块加载和拖动 seek，前端不需要把整个文件读进内存
- * （无损一首 20 MB+，读进内存会明显拖慢手机）。
+ *   · 库内整首（`path`）→ 走 `/api/play`：服务端把 ALAC 转成 FLAC 再发
+ *   · 电台整首（`path`）→ 同上，只是文件来自 radio.ts 准备的临时缓存
+ *   · 30 秒试听（`url`）→ **直连 Apple CDN**：目录给的片段不加密，
+ *     `<audio>` 取跨源媒体不受 CORS 限制，所以一行流量都不过 NAS
  *
- * ## 为什么首次播放会停一下
+ * 结束语义：试听**放完就停**（连播片段等于永远听不完任何东西），电台与库内曲目
+ * **继续下一首**。
  *
- * 库里是 ALAC，浏览器放不了；服务端要转成 FLAC（实测约 1 秒）。
- * 这段延迟发生在第一个 Range 请求里。为了让它尽量无感，切歌时**预取**下一首：
- * 播第一首时顺手请求第二首，用户点下一首时通常已经转好了。
+ * 电台第一首要现准备（下载 + 解密 + 转码，实测约 5–50 秒，取决于曲目大小）。
+ * 这段等待必须显式显示"正在准备…"，否则按了播放没声音，用户只会以为坏了。
  */
+import { radioPrepareOne, radioReset } from "./radio.js";
 
-const audio = document.getElementById("player-audio");
 const bar = document.getElementById("player");
 const elTitle = document.getElementById("player-title");
 const elSub = document.getElementById("player-sub");
@@ -26,321 +27,276 @@ const elCur = document.getElementById("player-cur");
 const elDur = document.getElementById("player-dur");
 const elVolume = document.getElementById("player-volume");
 
-/** 队列：{ path, song, artist, album } */
+/* 元素在 views/partials/player.ejs 里；沿用同一个而不是另建一个，
+   否则页面里同时存在两个 <audio>，谁在响从外部看不出来 */
+const audio = document.getElementById("player-audio");
 let queue = [];
 let index = -1;
-/** 正在拖动进度条时不要被 timeupdate 抢回去 */
+/** 当前电台 id；换台时队列清空。 */
+let radioId = null;
+
 let seeking = false;
-/** 发起当前播放的那个按钮 —— 用来标 .playing（同时只可能有一个在响） */
+/** 发起当前播放的那个按钮，用来标 .playing（同时只能有一个）。 */
 let originBtn = null;
 
-function markOrigin(playing) {
-    if (!originBtn) return;
-    originBtn.classList.toggle("playing", playing);
-}
-
-/*
- * 电台模式。
- *
- * Apple 的 next-tracks 每次只给 2 首，且每次调用都往前推（实测连调三次
- * 拿到六首不同的），所以电台不是"取完一份列表"，而是**快用完就续杯**。
- * id 为 null 表示当前队列不是电台 —— 那时试听放完就该停。
- */
-const radio = { id: null, name: "", filling: false };
-/** 已经预取过的 path，避免重复请求 */
-const prefetched = new Set();
+/* 播放条只在登录后的页面上有（登录页也 include 了 foot）。元素不在就直接退出，
+   否则下面每一个 addEventListener 都会抛。 */
+if (!bar || !audio) {
+    /* no-op */
+} else {
+/* ---- 音量/进度条 ----------------------------------------------- */
 
 function fmt(sec) {
-    if (!Number.isFinite(sec) || sec < 0) return "0:00";
+    if (!Number.isFinite(sec)) return "0:00";
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
     return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function playUrl(path) {
-    return `/api/play?path=${encodeURIComponent(path)}`;
-}
+elVolume.addEventListener("input", () => {
+    audio.volume = Number(elVolume.value);
+});
+audio.volume = Number(elVolume.value);
 
-/**
- * 队列条目的实际音源。
- *
- * 两种：
- *   · 库内文件 → /api/play（服务端把 ALAC 转成浏览器能放的 FLAC）
- *   · 试听片段 → 目录给的 CDN 地址，**原样直连**
- *
- * 试听不需要服务端参与：Apple 的 previews 是不加密的普通 MP4，
- * 而 <audio> 取跨源媒体不受 CORS 限制，所以一点流量都不过 NAS。
- */
-function srcOf(item) {
-    return item.preview ? item.url : playUrl(item.path);
-}
+elProgress.addEventListener("input", () => {
+    seeking = true;
+    const ratio = Number(elProgress.value) / 1000;
+    if (Number.isFinite(audio.duration)) {
+        elCur.textContent = fmt(ratio * audio.duration);
+    }
+});
+
+elProgress.addEventListener("change", () => {
+    const ratio = Number(elProgress.value) / 1000;
+    if (Number.isFinite(audio.duration)) audio.currentTime = ratio * audio.duration;
+    seeking = false;
+});
+
+/* ---- 控件事件 -------------------------------------------------- */
+
+elToggle.addEventListener("click", () => {
+    if (audio.paused) {
+        const res = audio.play().catch((e) => {
+            /* 自动播放策略被拦——这是浏览器行为，不是错误。点一下播放键就行。*/
+            if (e.name === "NotAllowedError") return;
+            console.warn("播放失败", e);
+        });
+        elToggle.textContent = "⏸";
+        bar.classList.add("playing");
+        markOrigin(true);
+    } else {
+        audio.pause();
+        elToggle.textContent = "▶";
+        bar.classList.remove("playing");
+        markOrigin(false);
+    }
+});
+
+elNext.addEventListener("click", next);
+elPrev.addEventListener("click", prev);
+
+/* ---- 播放队列控制 --------------------------------------------- */
 
 function show() {
     if (bar) bar.hidden = false;
 }
 
-function load(list, at) {
+function hide() {
+    if (bar) bar.hidden = true;
+}
+
+async function load(list, at) {
     queue = list;
     index = at;
     const t = queue[index];
-    if (!t) return;
+    if (!t) return false;
+
+    if (t.path) {
+        /* 整首：路径由 radio.ts 登记或音乐库自带 */
+        audio.src = new URL(`/api/play?path=${encodeURIComponent(t.path)}`, location.href).href;
+    } else if (t.preview) {
+        /* 30 秒片段：直连 Apple CDN */
+        audio.src = t.url;
+    } else {
+        elSub.textContent = "曲目不可用";
+        return false;
+    }
+
     show();
     elTitle.textContent = t.song || "未知曲目";
-    /*
-     * 明确标「试听」：片段只有 30 秒，不写清楚用户会以为歌坏了 / 网站卡了。
-     */
-    elSub.textContent = t.preview
-        ? [t.artist, "试听 30 秒"].filter(Boolean).join(" · ")
-        : [t.artist, t.album].filter(Boolean).join(" · ");
-    audio.src = srcOf(t);
-    audio.play().catch((e) => {
-        /* 自动播放被拦：这是浏览器策略，不是错误。让用户点一下播放键即可。 */
+    elSub.textContent = [t.artist, t.album].filter(Boolean).join(" · ");
+    await audio.play().catch((e) => {
+        /* 自动播放策略被拦——用户得主动点击播放。不会在这里报错炸页。*/
         if (e.name !== "NotAllowedError") console.warn("播放失败", e);
     });
+
     document.title = `${t.song} — amdl-web`;
 }
 
 /**
- * 再要一批曲目，追加到队列尾部。
+ * 下一首。
  *
- * 按 previewUrl 去重：Apple 偶尔会把刚给过的歌再给一次，
- * 连着听同一首两遍比断一跳更难受。
+ * 电台队在尾时先**就地备一首**再播 —— 不能只发起备歌然后指望
+ * 用户再点一次：他要的就是"现在这声之后马上有下一首"。
  */
-async function radioFill() {
-    if (!radio.id || radio.filling) return;
-    radio.filling = true;
-    try {
-        const r = await fetch("/api/station/next/" + encodeURIComponent(radio.id));
-        const d = await r.json();
-        const fresh = (d.tracks ?? [])
-            .filter((t) => t.previewUrl)
-            .map((t) => ({ preview: true, url: t.previewUrl, song: t.name, artist: t.artistName }))
-            .filter((t) => !queue.some((q) => q.url === t.url));
-        for (const t of fresh) queue.push(t);
-    } catch {
-        /* 续杯失败：把手上剩下的听完就好，不该打断播放 */
-    } finally {
-        radio.filling = false;
-    }
-}
-
-/**
- * 开始一个电台。
- *
- * 与 load() 不同：队列是**边播边长**的，所以这里先建空队列、拉两首，
- * 再交给 load() —— 之后每次接近队尾都再拉。
- */
-async function startRadio(id, name, btn) {
-    radio.id = id;
-    radio.name = name;
-    queue = [];
-    index = -1;
-    await radioFill();
-    if (queue.length === 0) {
-        radio.id = null;
-        show();
-        elTitle.textContent = name || "电台";
-        elSub.textContent = "这个电台暂时取不到曲目";
+async function next() {
+    if (index + 1 < queue.length) {
+        await load(queue, index + 1);
         return;
     }
-    if (btn) {
-        if (originBtn && originBtn !== btn) originBtn.classList.remove("playing");
-        originBtn = btn;
+    if (radioId) {
+        elSub.textContent = "正在准备下一首…";
+        const ok = await radioPrepareOne(radioId, queue);
+        if (ok) {
+            await load(queue, queue.length - 1);
+            return;
+        }
+        elSub.textContent = "这个电台暂时没有更多曲目";
     }
-    load(queue, 0);
+    elToggle.textContent = "▶";
 }
 
-function next() {
-    if (index + 1 < queue.length) load(queue, index + 1);
-}
-
+/** 上一首 */
 function prev() {
-    /* 播过 3 秒再按上一首 = 重播当前曲；否则真的上一首（和主流播放器一致） */
-    if (audio.currentTime > 3) {
-        audio.currentTime = 0;
+    const cur = queue[index];
+    if (!cur) return;
+    /* 如果正在播第一首歌且播了超过几秒，就当重播 */
+    if (index > 0 && !(radioId && index === 0 && audio.currentTime > 4)) {
+        load(queue, index - 1);
         return;
     }
-    if (index > 0) load(queue, index - 1);
+    audio.currentTime = 0;
 }
 
-/**
- * 预取下一首。
- *
- * 用 fetch 而不是 new Audio().load()：后者会占用一个解码器并可能被浏览器回收，
- * 前者只要把响应头拿到、把 body 丢掉就行 —— 但它**仍然会生成缓存文件**，
- * 因为转码发生在服务端响应第一个字节之前。
- */
-function prefetchNext() {
-    const t = queue[index + 1];
-    /* 试听是 CDN 直连、没有转码成本，预取它只会浪费带宽 */
-    if (!t || t.preview || prefetched.has(t.path)) return;
-    prefetched.add(t.path);
-    fetch(playUrl(t.path), { headers: { range: "bytes=0-1" } })
-        .then((r) => r.arrayBuffer())
-        .catch(() => {
-            /* 预取失败无所谓，真正播的时候还会再请求一次 */
-            prefetched.delete(t.path);
-        });
+/** 标记当前播放的按钮，方便高亮。 */
+function markOrigin(playing) {
+    if (!originBtn) return;
+    originBtn.classList.toggle("playing", playing);
 }
 
-/* ---- 事件 ------------------------------------------------------------ */
+/* ---- 元数据事件 ---------------------------------------------- */
 
-if (audio && bar) {
-    elToggle.addEventListener("click", () => {
-        if (audio.paused) audio.play().catch(() => {});
-        else audio.pause();
-    });
+audio.addEventListener("play", () => {
+    elToggle.textContent = "⏸";
+    bar.classList.add("playing");
+    markOrigin(true);
+});
 
-    elNext.addEventListener("click", next);
-    elPrev.addEventListener("click", prev);
+audio.addEventListener("pause", () => {
+    elToggle.textContent = "▶";
+    bar.classList.remove("playing");
+    markOrigin(false);
+});
 
-    audio.addEventListener("play", () => {
-        elToggle.textContent = "⏸";
-        bar.classList.add("playing");
-        markOrigin(true);
-    });
-    audio.addEventListener("pause", () => {
+audio.addEventListener("ended", () => {
+    /*
+     * 两种结束语义，故意不一样：
+     *   · 普通试听 → **停下**。30 秒片段连播等于永远听不完任何东西。
+     *   · 电台 → 继续往下（队尾时就地备下一首）。
+     * 库内整首连播也走 next()，但那条分支不会触发备歌。
+     */
+    const cur = queue[index];
+    const isPreview = Boolean(cur && cur.preview);
+    if (!radioId && isPreview) {
         elToggle.textContent = "▶";
-        bar.classList.remove("playing");
-        markOrigin(false);
-    });
-    audio.addEventListener("ended", () => markOrigin(false));
-    audio.addEventListener("error", () => markOrigin(false));
+        return;
+    }
+    void next();
+});
 
-    audio.addEventListener("loadedmetadata", () => {
-        elDur.textContent = fmt(audio.duration);
-    });
+audio.addEventListener("loadedmetadata", () => {
+    elDur.textContent = fmt(audio.duration);
+});
 
-    audio.addEventListener("timeupdate", () => {
-        if (seeking || !Number.isFinite(audio.duration) || audio.duration === 0) return;
-        elProgress.value = String(Math.round((audio.currentTime / audio.duration) * 1000));
-        elCur.textContent = fmt(audio.currentTime);
-    });
+audio.addEventListener("timeupdate", () => {
+    if (seeking) return;
+    if (!Number.isFinite(audio.duration)) return;
+    elProgress.value = String(Math.round((audio.currentTime / audio.duration) * 1000));
+    elCur.textContent = fmt(audio.currentTime);
+});
 
-    audio.addEventListener("ended", () => {
-        /*
-         * 两种结束语义，故意不一样：
-         *
-         *   · 普通试听（点了某首歌的 ▶）→ **停下**。它只是 30 秒片段，
-         *     自动连播片段会变成"永远听不完任何东西"，比手动点更烦。
-         *   · 电台（startRadio 进来的）→ **继续往下**，并在接近队尾时续杯。
-         *     电台的整个意义就是不停歇地给下一首。
-         */
-        const cur = queue[index];
-        const advance = radio.id !== null || !(cur && cur.preview);
-        if (advance) {
-            /* 剩不到 3 首就去要下一批：Apple 每次只给 2 首 */
-            if (radio.id && queue.length - (index + 1) < 3) void radioFill();
-            if (index + 1 < queue.length) {
-                load(queue, index + 1);
-                return;
-            }
-            if (radio.id) {
-                /* 刚要的可能还没回来，稍后再试一次，别就此停住 */
-                setTimeout(() => { if (index + 1 < queue.length) load(queue, index + 1); }, 1500);
-            }
-        }
-        elToggle.textContent = "▶";
-    });
+audio.addEventListener("error", () => {
+    const err = audio.error;
+    if (err) {
+        console.warn("audio error:", err.code, err.message);
+        elSub.textContent = "这首歌无法播放";
+    }
+    markOrigin(false);
+});
 
-    audio.addEventListener("playing", prefetchNext);
+/* ---- 委托 ---------------------------------------------------- */
 
-    audio.addEventListener("error", () => {
-        const msg = audio.error;
-        if (!msg) return;
-        /* 转码失败或文件没了 —— 明确说出来，别让它静默停在 0:00 */
-        elSub.textContent = "这首歌无法播放（文件可能已删除，或转码失败）";
-        console.warn("audio error", msg.code, msg.message);
-    });
-
-    elProgress.addEventListener("input", () => {
-        seeking = true;
-        const ratio = Number(elProgress.value) / 1000;
-        if (Number.isFinite(audio.duration)) {
-            elCur.textContent = fmt(ratio * audio.duration);
-        }
-    });
-
-    elProgress.addEventListener("change", () => {
-        const ratio = Number(elProgress.value) / 1000;
-        if (Number.isFinite(audio.duration)) audio.currentTime = ratio * audio.duration;
-        seeking = false;
-    });
-
-    elVolume.addEventListener("input", () => {
-        audio.volume = Number(elVolume.value);
-    });
-    audio.volume = Number(elVolume.value);
-
-    /* 空格播放/暂停 —— 但输入框里打字时不能抢 */
-    document.addEventListener("keydown", (ev) => {
-        if (ev.code !== "Space") return;
-        const t = ev.target;
-        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-        if (bar.hidden) return;
-        ev.preventDefault();
-        if (audio.paused) audio.play().catch(() => {});
-        else audio.pause();
-    });
-}
-
-/*
- * 播放委托：带 data-play-path（库内文件）或 data-play-preview（30 秒片段）的元素都能触发。
- *
- * 卡片是流式插入的（搜索结果、榜单、推荐货架），所以用委托而不是逐个绑定。
- * 若同一个容器上有 data-play-list（JSON 数组），就把它当整个队列 ——
- * 这样点专辑里的某一首，下一首会自然往下走。
- *
- * 注意委托必须排在 app.js 的"卡片→详情页"委托**之后**注册吗？不需要：
- * 这里 stopPropagation + preventDefault 会挡住冒泡，而 app.js 那条对
- * `button` 本来就 return（t.closest("button, a, .why")）。
- */
 document.addEventListener("click", (ev) => {
     const t = ev.target instanceof Element ? ev.target : null;
     if (!t) return;
+
+    /* 电台卡 ▶ */
     const radioBtn = t.closest("[data-radio-id]");
     if (radioBtn) {
         ev.preventDefault();
         ev.stopPropagation();
-        void startRadio(radioBtn.getAttribute("data-radio-id"), radioBtn.getAttribute("data-radio-name") || "", radioBtn);
+        void startRadio(radioBtn.dataset.radioId, radioBtn.dataset.radioName, radioBtn);
         return;
     }
 
-    const btn = t.closest("[data-play-path], [data-play-preview]");
+    /* 预览 ▶ */
+    const btn = t.closest("[data-play-preview], [data-play-path]");
     if (!btn) return;
-
-    const previewUrl = btn.getAttribute("data-play-preview");
-    if (previewUrl) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        if (originBtn && originBtn !== btn) originBtn.classList.remove("playing");
-        originBtn = btn;
-        load(
-            [{
-                preview: true,
-                url: previewUrl,
-                song: btn.getAttribute("data-play-name") || "",
-                artist: btn.getAttribute("data-play-artist") || ""
-            }],
-            0
-        );
-        return;
-    }
-
-    /* 从电台切回具体曲目：关掉电台模式，不然它会继续往队列里塞歌 */
-    radio.id = null;
-
     ev.preventDefault();
     ev.stopPropagation();
+
     if (originBtn && originBtn !== btn) originBtn.classList.remove("playing");
     originBtn = btn;
 
-    const listEl = btn.closest("[data-play-list]");
-    if (listEl) {
-        const list = JSON.parse(listEl.getAttribute("data-play-list"));
-        const at = Math.max(0, list.findIndex((x) => x.path === btn.getAttribute("data-play-path")));
-        load(list, at);
+    if (btn.dataset.playPreview) {
+        load([{ preview: true, url: btn.dataset.playPreview, song: btn.dataset.playName || "", artist: "" }], 0);
+    } else {
+        load([{ path: btn.dataset.playPath, song: btn.dataset.playName || "", artist: "" }], 0);
+    }
+});
+
+window.player = { audio, load, next, prev };
+
+/* ---- startRadio: 整首优先，失败退回 30 秒 --------------------- */
+
+/**
+ * 开始一个电台。
+ *
+ * @param id 电台的 id（ra.u-* 格式）
+ * @param name 电台名称，用作副标题
+ * @param btn 点击它的卡片按钮，标成 .playing
+ */
+async function startRadio(id, name, btn) {
+    radioId = id;
+    queue = [];
+    index = -1;
+    originBtn = null;
+    /* 换台要作废上一台的缓冲，否则旧电台已经取到、还没播的几首会串进新台 */
+    radioReset();
+
+    /* 电台第一首要现准备（下载解密 + 转码，约 5–10 秒）。不显示这行，用户按下
+     * 播放却几秒没声音，只会以为坏了。 */
+    show();
+    elTitle.textContent = name || "电台";
+    elSub.textContent = "正在准备第一首…";
+
+    await radioPrepareOne(id, queue);
+
+    if (queue.length === 0) {
+        /* 一首都备不出来 -> 彻底停 */
+        hide();
+        elTitle.textContent = "电台";
+        elSub.textContent = "这个电台暂时取不到曲目";
         return;
     }
-    load([{ path: btn.getAttribute("data-play-path"), song: btn.getAttribute("data-play-name") || "" }], 0);
-});
+
+    if (btn) {
+        btn.classList.add("playing");
+        originBtn = btn;
+    }
+
+    load(queue, 0);
+}
+
+window.startRadio = startRadio;
+}

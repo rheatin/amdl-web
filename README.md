@@ -210,6 +210,7 @@ docker compose logs -f wrapper-lite
 | POST | `/api/config` | 写回 `config.yaml`（白名单 + 取值校验 + 原地写，写完立即生效） |
 | GET | `/api/discover` | 「为你推荐」：按账号个性化的货架，Apple 每日刷新（需 `media-user-token`） |
 | GET | `/api/station/next/:id` | 电台接下来要播的曲目（每次 2 首，调用即前移） |
+| POST | `/api/radio/prepare` | 把一首电台曲目准备成可整首播放的 FLAC（下载解密 + 转码 + 清临时文件） |
 | GET | `/api/play?path=` | 播放库内文件：首次边转 FLAC 边发，之后支持 Range（可拖进度条） |
 | POST | `/api/apple/2fa` | 提交 Apple 2FA 验证码 |
 
@@ -235,6 +236,8 @@ docker compose logs -f wrapper-lite
 两个 token 缺一不可，且**开发者 token 必须是现抓的**：实测用 `config.yaml` 里的
 `authorization-token` 配 `media-user-token` 会 401，必须用从 music.apple.com
 bundle 抓到的那个（`src/ampmusic.ts` 的 `tokenCandidates`）。
+
+电台整首播放：点 ▶ 连续播整首（下载 → 解密 → FLAC 缓存 → 清临时目录），第一首要等 20–50 秒。
 
 ### 电台不是直播流
 

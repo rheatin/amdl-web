@@ -47,6 +47,7 @@ import {
 } from "./auth.js";
 import { artworkAt } from "./artwork.js";
 import { clearLocaleCache, config, language, storefront } from "./config.js";
+import { isRadioPlayable, prepareRadioTrack, radioTrackFile } from "./radio.js";
 import { explicitJobOptions } from "./jobopts.js";
 import { cancelJob, enqueue, isActive, queueDepth, reconcileOnBoot, subscribe } from "./queue.js";
 import { resolveRegionPlan, regionLabel, type RegionDeps, type RegionPlan } from "./region.js";
@@ -187,8 +188,8 @@ function decorateFormats(
 /** 搜索页：从目录自带 traits 构建音质芯片，零额外请求。 */
 function decorateSearchResults(
     results: Array<{ id: string; type: string; enhancedHls?: string; traits?: string[] }>
-): Array<{ formats: AudioFormatView[] }> {
-    return decorateFormats(results);
+): Array<{ id: string; type: string; enhancedHls?: string; traits?: string[] }> {
+    return results.map((r, i) => ({ ...r, formats: decorateFormats([r])[0].formats || [] }));
 }
 
 /**
@@ -511,7 +512,11 @@ app.get("/search", requireAuth, async (req: Request, res: Response) => {
     // 代价是这一次渲染没有结果 —— 客户端在首帧之后马上把流接上，观感上就是"先出页面，再出结果"。
     // 没有 JS 的客户端不带这个参数，走的仍是原来那套完整服务端渲染。
     const streaming = req.query["stream"] === "1";
-    const withQuality = streaming ? results : decorateSearchResults(results);
+    /*
+     * 首屏：无论是否流式，都从 traits 出芯片。
+     * 流式只是把后续逐条推送出来，不是"首屏空"——那样非流式首屏就会说"音质未取到"。
+     */
+    const withQuality = decorateSearchResults(results);
 
     res.render("search", {
         q,
@@ -659,18 +664,34 @@ app.get("/api/play", requireAuth, async (req: Request, res: Response) => {
         res.status(400).json({ error: "缺少 path" });
         return;
     }
-    /* 只在库里的文件才能播 —— 这是唯一的授权边界 */
+    /*
+     * 两个合法来源，都是**精确匹配我们自己登记过的路径**：
+     *   · 音乐库（下载落盘的曲目）
+     *   · 电台临时准备出来的 FLAC（见 radio.ts）
+     * 加第二个来源时不能松成"路径存在就发"，否则这条路由就变成任意文件读取。
+     */
     const track = store.allTracks().find((t) => t.path === wanted);
-    if (!track) {
+    const fromRadio = !track && isRadioPlayable(wanted);
+    if (!track && !fromRadio) {
         res.status(404).json({ error: "不在音乐库中" });
         return;
     }
-    if (!fs.existsSync(track.path)) {
+    /* 电台登记的是已经转好的 FLAC，直接发；库内曲目是 ALAC，要转 */
+    const source = track?.path ?? wanted;
+    if (!fs.existsSync(source)) {
         res.status(404).json({ error: "文件不存在（可能已被移动或删除）" });
         return;
     }
 
-    const key = keyForPath(track.path);
+    if (fromRadio) {
+        res.type("audio/flac");
+        res.sendFile(wanted, (err) => {
+            if (err && !res.headersSent) res.status(500).json({ error: String(err) });
+        });
+        return;
+    }
+
+    const key = keyForPath(source);
 
     /*
      * 两条路径，取决于浏览器要的是"整首"还是"某一段"：
@@ -690,7 +711,7 @@ app.get("/api/play", requireAuth, async (req: Request, res: Response) => {
 
     if (!wholeFile || isCached(key)) {
         try {
-            if (!isCached(key)) await transcodeToCache(track.path, key);
+            if (!isCached(key)) await transcodeToCache(source, key);
         } catch (e) {
             res.status(500).json({ error: (e as Error).message });
             return;
@@ -718,10 +739,10 @@ app.get("/api/play", requireAuth, async (req: Request, res: Response) => {
     });
 
     try {
-        await transcodeStream(track.path, key, (chunk) => {
+        await transcodeStream(source, key, (chunk) => {
             /* 客户端走了就只写缓存，不再往响应里塞（见 transcodeStream 的注释） */
             if (!closed) res.write(chunk);
-        }, track.durationMs);
+        }, track?.durationMs);
         if (!closed) res.end();
     } catch (e) {
         if (!res.headersSent) res.status(500).json({ error: (e as Error).message });
@@ -932,6 +953,30 @@ app.post("/api/config", requireAuth, (req: Request, res: Response) => {
         });
     } catch (e) {
         res.status(400).json({ error: (e as Error).message });
+    }
+});
+
+/**
+ * 把一首电台曲目准备成可整首播放的 FLAC（下载解密 → 转码 → 清临时文件）。
+ *
+ * 前端在**播到某首之前**调它（预取），拿到 path 后就能像库内曲目一样走 /api/play。
+ * 引擎是串行的（Apple 按 IP 限流），所以快进时多个请求会排队 ——
+ * 同一首的重复请求共享同一个在飞任务，不会下两遍。
+ *
+ * 首次准备约 5–10 秒（真的要从 Apple 取一整首）。
+ */
+app.post("/api/radio/prepare", requireAuth, async (req: Request, res: Response) => {
+    const trackId = String((req.body as any)?.trackId ?? "");
+    const url = String((req.body as any)?.url ?? "");
+    const cached = radioTrackFile(trackId);
+    if (cached) {
+        res.json({ path: cached, cached: true });
+        return;
+    }
+    try {
+        res.json({ path: await prepareRadioTrack(trackId, url), cached: false });
+    } catch (e) {
+        res.status(502).json({ error: (e as Error).message });
     }
 });
 

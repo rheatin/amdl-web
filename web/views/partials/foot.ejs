@@ -12,6 +12,13 @@
 <div class="ambient ambient-b" aria-hidden="true"></div>
 <div class="ambient ambient-c" aria-hidden="true"></div>
 <script src="/static/app.js?v=<%= assetVersion %>"></script>
-<script src="/static/player.js?v=<%= assetVersion %>" defer></script>
+<%#
+  电台的"每次只备一首"逻辑单独一个文件：它的控制流容易写错
+  （曾经把 station 给的两首都 await 完才返回，于是按播放要等约 50 秒才出声）。
+  radio.js / player.js 互为模块，所以 type="module"。app.js 那种全局共享的
+  经典脚本用不了 import，但这两个文件只彼此依赖，不需要挂到 window 上。
+%>
+<script src="/static/radio.js?v=<%= assetVersion %>" type="module"></script>
+<script src="/static/player.js?v=<%= assetVersion %>" type="module"></script>
 </body>
 </html>

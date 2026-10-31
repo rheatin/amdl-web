@@ -111,11 +111,22 @@ function jobOverrides(opts: Partial<JobOptions>): Array<[string, OverrideValue]>
  * 复制基础 config.yaml 并套用覆盖项，写入任务私有目录后返回该目录。
  * 覆盖方式见 engineconf.applyOverrides（逐行替换，未命中则追加，不解析整份 YAML）。
  */
-export function writeJobConfig(job: Job): string {
+/**
+ * 写一份任务私有配置。
+ *
+ * @param dirOverride 配置目录。默认按任务 id 推导（jobcfg/<id>）；
+ *   电台播放要写到临时目录，所以允许显式指定。
+ * @param extraOverrides 追加的引擎键覆盖，**优先级高于任务选项**。
+ */
+export function writeJobConfig(
+    job: Job,
+    dirOverride?: string,
+    extraOverrides?: Array<[string, OverrideValue]>
+): string {
     const base = loadEngineConfig(config.engineDir).text;
-    const overrides = [...FORCED, ...jobOverrides(job.options ?? {})];
+    const overrides = [...FORCED, ...jobOverrides(job.options ?? {}), ...(extraOverrides ?? [])];
 
-    const dir = jobConfigDir(job.id);
+    const dir = dirOverride ?? jobConfigDir(job.id);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "config.yaml"), applyOverrides(base, overrides));
     return dir;
@@ -128,12 +139,18 @@ export function writeJobConfig(job: Job): string {
  *                落盘清单带回去（已经下好的文件不能装作没有，任务状态由 queue 决定成
  *                `cancelled` 而不是 `failed`）。
  */
-export function rip(job: Job, onLine: (line: string) => void, signal?: AbortSignal): Promise<RipResult> {
+export function rip(
+    job: Job,
+    onLine: (line: string) => void,
+    signal?: AbortSignal,
+    /** 见 writeJobConfig：电台播放需要自定义目录与落盘位置 */
+    cfg?: { dir?: string; extraOverrides?: Array<[string, OverrideValue]> }
+): Promise<RipResult> {
     const args = engineArgs(job.url, job.codec);
 
     let cwd = config.engineDir;
     try {
-        cwd = writeJobConfig(job);
+        cwd = writeJobConfig(job, cfg?.dir, cfg?.extraOverrides);
         const shown = jobOverrides(job.options ?? {}).map(([k, v]) => `${k}=${v}`).join(" · ");
         onLine(
             `[amdl-web] 引擎配置以 ${engineConfigPath()} 为准` +
